@@ -250,3 +250,73 @@ LEFT OUTER JOIN last_lab_pregnancy USING (patient_id)
 LEFT OUTER JOIN last_lab_hpv USING (patient_id)
 LEFT OUTER JOIN last_lab_creat USING (patient_id)
 LEFT OUTER JOIN last_lab_gfr USING (patient_id);
+
+
+
+
+-- CTE with info on contraceptive provided today (done)
+WITH contraceptive_provided AS (
+    SELECT DISTINCT ON (cpt.patient_id, cpt.contraceptive_provided_today) 
+        cpt.patient_id, 
+        cpt.encounter_id, 
+        cf.date_of_visit AS date_contraceptive_provided, 
+        cpt.contraceptive_provided_today
+    FROM contraceptive_provided_today cpt
+    LEFT JOIN "1_client_form" cf USING (patient_id)
+    ORDER BY cpt.patient_id, cpt.contraceptive_provided_today, cf.date_of_visit),
+
+contraceptive_provided_pivot AS (
+    SELECT 
+        DISTINCT ON (cp.encounter_id, cp.patient_id) cp.encounter_id, 
+        cp.patient_id, 
+        MAX(CASE WHEN cp.contraceptive_provided_today = 'Injectable' THEN cp.date_contraceptive_provided END) AS Injectable_provided,
+        MAX(CASE WHEN cp.contraceptive_provided_today = 'Implant' THEN  cp.date_contraceptive_provided END) AS Implant_provided,
+        MAX(CASE WHEN cp.contraceptive_provided_today = 'Oral contraceptive pill' THEN  cp.date_contraceptive_provided END) AS Oral_contraceptive_pill_provided,
+        MAX(CASE WHEN cp.contraceptive_provided_today = 'Condom' THEN cp.date_contraceptive_provided END) AS Condom_provided,
+        MAX(CASE WHEN cp.contraceptive_provided_today = 'Emergency contraceptive pill' THEN  cp.date_contraceptive_provided END) AS Emergency_contraceptive_pill_provided,
+        MAX(CASE WHEN cp.contraceptive_provided_today = 'IUCD' THEN  cp.date_contraceptive_provided END) AS IUCD_provided
+    FROM contraceptive_provided cp
+    GROUP BY cp.encounter_id, cp.patient_id),
+contraceptive_provided_list AS (
+	SELECT encounter_id, STRING_AGG(contraceptive_provided_today, ', ') AS list_contraceptive_provided
+	FROM contraceptive_provided
+	GROUP BY encounter_id)
+
+contraceptive_provided_table AS (
+SELECT cp.patient_id, cp.encounter_id, cp.date_contraceptive_provided, cp.contraceptive_provided_today, cpp.Injectable_provided, cpp.Implant_provided, cpp.Oral_contraceptive_pill_provided, cpp.Condom_provided, cpp.Emergency_contraceptive_pill_provided, cpp.IUCD_provided, cpl.list_contraceptive_provided
+FROM contraceptive_provided cp
+LEFT JOIN contraceptive_provided_pivot cpp ON cp.patient_id = cpp.patient_id AND cp.encounter_id = cpp.encounter_id
+LEFT JOIN contraceptive_provided_list cpl ON cp.patient_id = cpp.patient_id AND cp.encounter_id = cpl.encounter_id)
+
+-- CTE with info on contraceptive on going (not finished)
+WITH co AS (
+    SELECT DISTINCT ON (contraceptive_ongoing.patient_id, contraceptive_ongoing.contraceptive_ongoing) 
+        contraceptive_ongoing.patient_id, 
+        contraceptive_ongoing.encounter_id, 
+        cf.date_of_visit AS date_contraceptive_ongoing, 
+        contraceptive_ongoing.contraceptive_ongoing
+    FROM contraceptive_ongoing 
+    LEFT JOIN "1_client_form" cf USING (patient_id)
+    ORDER BY contraceptive_ongoing.patient_id, contraceptive_ongoing.contraceptive_ongoing, cf.date_of_visit),
+
+contraceptive_ongoing_pivot AS (
+    SELECT 
+        DISTINCT ON (cp.encounter_id, cp.patient_id) cp.encounter_id, 
+        cp.patient_id, 
+        MAX(CASE WHEN cp.contraceptive_ongoing = 'Injectable' THEN cp.date_contraceptive_ongoing END) AS Injectable_provided,
+        MAX(CASE WHEN cp.contraceptive_ongoing = 'Implant' THEN  cp.date_contraceptive_ongoing END) AS Implant_provided,
+        MAX(CASE WHEN cp.contraceptive_ongoing = 'Oral contraceptive pill' THEN  cp.date_contraceptive_ongoing END) AS Oral_contraceptive_pill_provided,
+        MAX(CASE WHEN cp.contraceptive_ongoing = 'Condom' THEN cp.date_contraceptive_provided END) AS Condom_provided,
+        MAX(CASE WHEN cp.contraceptive_ongoing = 'Emergency contraceptive pill' THEN  cp.date_contraceptive_provided END) AS Emergency_contraceptive_pill_provided,
+        MAX(CASE WHEN cp.contraceptive_ongoing = 'IUCD' THEN  cp.date_contraceptive_provided END) AS IUCD_provided
+    FROM contraceptive_provided cp
+    GROUP BY cp.encounter_id, cp.patient_id),
+contraceptive_provided_list AS (
+	SELECT encounter_id, STRING_AGG(contraceptive_provided_today, ', ') AS list_contraceptive_provided
+	FROM contraceptive_provided
+	GROUP BY encounter_id)
+
+SELECT cp.patient_id, cp.encounter_id, cp.date_contraceptive_ongoing, cp.contraceptive_ongoing_today, cpp.Injectable_ongoing, cpp.Implant_ongoing, cpp.Oral_contraceptive_pill_ongoing, cpp.Condom_ongoing, cpp.Emergency_contraceptive_pill_ongoing, cpp.IUCD_ongoing, cpl.list_contraceptive_ongoing
+FROM contraceptive_ongoing cp
+LEFT JOIN contraceptive_ongoing_pivot cpp ON cp.patient_id = cpp.patient_id AND cp.encounter_id = cpp.encounter_id
+LEFT JOIN contraceptive_ongoing_list cpl ON cp.patient_id = cpp.patient_id AND cp.encounter_id = cpl.encounter_id;
