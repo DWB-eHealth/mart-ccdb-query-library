@@ -1,4 +1,18 @@
-WITH First_initial AS (
+WITH initial AS (
+	SELECT 
+		patient_id, encounter_id AS initial_encounter_id, visit_location AS initial_visit_location,
+		date AS initial_visit_date, DENSE_RANK () OVER (PARTITION BY patient_id ORDER BY date) AS initial_visit_order,
+		LEAD (date) OVER (PARTITION BY patient_id ORDER BY date) AS next_initial_visit_date
+	FROM  "public"."ncd_initial_visit"),
+cohort AS (
+	SELECT
+		i.patient_id, i.initial_encounter_id, i.initial_visit_location, i.initial_visit_date,
+		CASE WHEN i.initial_visit_order > 1 THEN 'Yes' END readmission, d.encounter_id AS discharge_encounter_id, d.discharge_date, d.patient_outcome AS patient_outcome
+	FROM initial i
+	LEFT JOIN (SELECT patient_id, encounter_id, COALESCE(discharge_date::date, date::date) AS discharge_date, patient_outcome FROM "public"."ncd_discharge_visit") d 
+		ON i.patient_id = d.patient_id AND d.discharge_date >= i.initial_visit_date AND (d.discharge_date < i.next_initial_visit_date OR i.next_initial_visit_date IS NULL)),
+
+First_initial AS (
     SELECT DISTINCT ON (ncd_init.patient_id)
         ncd_init.patient_id,  
         ncd_init.date,
@@ -9,7 +23,6 @@ WITH First_initial AS (
     WHERE ncd_init.date IS NOT NULL
     ORDER BY ncd_init.patient_id, ncd_init.date ASC
 ),
-
 Last_Vitals_Labs_Date AS (
     SELECT
         patient_id,
@@ -19,7 +32,9 @@ Last_Vitals_Labs_Date AS (
         MAX(CASE WHEN random_blood_glucose IS NOT NULL THEN random_blood_glucose ELSE NULL END) AS last_rbg,
         MAX(CASE WHEN urine_protein IS NOT NULL THEN urine_protein ELSE NULL END) AS last_urine_protein,
         MAX(CASE WHEN systolic_blood_pressure IS NOT NULL THEN systolic_blood_pressure ELSE NULL END) AS last_systolic_bp,
-        MAX(CASE WHEN diastolic_blood_pressure IS NOT NULL THEN diastolic_blood_pressure ELSE NULL END) AS last_diastolic_bp
+        MAX(CASE WHEN diastolic_blood_pressure IS NOT NULL THEN diastolic_blood_pressure ELSE NULL END) AS last_diastolic_bp,
+        MAX(CASE WHEN bmi IS NOT NULL THEN bmi ELSE NULL END) AS last_BMI,
+        MAX(CASE WHEN bmi IS NOT NULL THEN date_of_vital_signs ELSE NULL END) AS last_BMI_date 
     FROM public.vitals_and_laboratory_information
     GROUP BY patient_id
 ),
@@ -128,9 +143,37 @@ Last_Visit_Location AS (
     ) AS combined
     ORDER BY combined.patient_id, combined.date DESC
 ),
+
+cohort_diagnosis AS (
+	SELECT
+		c.patient_id, c.initial_encounter_id, n.date, d.diagnosis AS diagnosis
+	FROM public.diagnosis d 
+	LEFT JOIN public.ncd_initial_visit n USING(encounter_id)
+	LEFT JOIN cohort c ON d.patient_id = c.patient_id AND c.initial_visit_date <= n.date AND COALESCE(c.discharge_date::date, CURRENT_DATE) >= n.date),
+
+cohort_diagnosis_last AS (
+    SELECT
+        patient_id, initial_encounter_id, diagnosis, date
+    FROM (
+        SELECT
+            cdg.*,
+            ROW_NUMBER() OVER (PARTITION BY patient_id, initial_encounter_id, diagnosis_group ORDER BY date DESC) AS rn
+        FROM (
+            SELECT
+                cd.*,
+                CASE
+                    WHEN diagnosis IN ('Chronic kidney disease', 'Cardiovascular disease', 'Asthma', 'Chronic obstructive pulmonary disease', 'Hypertension', 'Other') THEN 'Group1'
+                    WHEN diagnosis IN ('Diabetes mellitus, type 1', 'Diabetes mellitus, type 2') THEN 'Group2'
+                    WHEN diagnosis IN ('Focal epilepsy', 'Generalised epilepsy', 'Unclassified epilepsy') THEN 'Group3'
+                    WHEN diagnosis IN ('Hypothyroidism', 'Hyperthyroidism') THEN 'Group4'
+                    ELSE 'Other'
+                END AS diagnosis_group
+            FROM cohort_diagnosis cd) cdg) foo
+    WHERE diagnosis IS NOT NULL),
+    
 ncd_diagnosis_pivot AS (
     SELECT 
-        patient_id,
+        patient_id,initial_encounter_id,
         MAX(CASE WHEN diagnosis = 'Asthma' THEN 1 ELSE NULL END) AS asthma,
         MAX(CASE WHEN diagnosis = 'Chronic kidney disease' THEN 1 ELSE NULL END) AS chronic_kidney_disease,
         MAX(CASE WHEN diagnosis = 'Cardiovascular disease' THEN 1 ELSE NULL END) AS cardiovascular_disease,
@@ -144,8 +187,8 @@ ncd_diagnosis_pivot AS (
         MAX(CASE WHEN diagnosis = 'Generalised epilepsy' THEN 1 ELSE NULL END) AS generalised_epilepsy,
         MAX(CASE WHEN diagnosis = 'Unclassified epilepsy' THEN 1 ELSE NULL END) AS unclassified_epilepsy,
         MAX(CASE WHEN diagnosis = 'Other' THEN 1 ELSE NULL END) AS other_ncd
-    FROM public.diagnosis
-    GROUP BY patient_id
+    FROM cohort_diagnosis_last
+    GROUP BY initial_encounter_id, patient_id
 ),
 ncd_risk_factors_pivot AS (
     SELECT 
@@ -293,23 +336,23 @@ Last_Seizure_Date AS (
 )
 
 SELECT
-    pat_info.patient_id AS patient_id,  
+    "public"."person_details_default".person_id AS patient_id,  
     "public"."patient_identifier"."Patient_Identifier" AS "Patient_Identifier",
-    pat_info.gender AS gender,
-    EXTRACT(YEAR FROM AGE(CURRENT_DATE, TO_DATE(pat_info.birthyear::TEXT, 'YYYY'))) AS age,
+    "public"."person_details_default".gender AS gender,
+    "public"."person_details_default".age AS age,
     CASE 
-        WHEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, TO_DATE(pat_info.birthyear::TEXT, 'YYYY'))) < 15 THEN '0-14 Years'
-        WHEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, TO_DATE(pat_info.birthyear::TEXT, 'YYYY'))) BETWEEN 15 AND 44 THEN '15-44 Years'
-        WHEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, TO_DATE(pat_info.birthyear::TEXT, 'YYYY'))) BETWEEN 45 AND 65 THEN '45-65 Years'
-        WHEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, TO_DATE(pat_info.birthyear::TEXT, 'YYYY'))) > 65 THEN '65+ Years'
+        WHEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, TO_DATE("public"."person_details_default".birthyear::TEXT, 'YYYY'))) < 15 THEN '0-14 Years'
+        WHEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, TO_DATE("public"."person_details_default".birthyear::TEXT, 'YYYY'))) BETWEEN 15 AND 44 THEN '15-44 Years'
+        WHEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, TO_DATE("public"."person_details_default".birthyear::TEXT, 'YYYY'))) BETWEEN 45 AND 65 THEN '45-65 Years'
+        WHEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, TO_DATE("public"."person_details_default".birthyear::TEXT, 'YYYY'))) > 65 THEN '65+ Years'
         ELSE NULL
     END AS "Age Group",
-    pat_info."Legal_status" AS "Legal_status",
-    pat_info."Education_level" AS "Education_level",
-    pat_info."Personal_Situation" AS "Personal_Situation",
-    pat_info."Patient_code" AS "Patient_code",
-    pat_info."City_Village_Camp" AS "City_Village_Camp",
-    First_initial.date AS Enrollment_Date, 
+    "public"."person_attributes"."Legal_status" AS "Legal_status",
+    "public"."person_attributes"."Education_level" AS "Education_level",
+    "public"."person_attributes"."Personal_Situation" AS "Personal_Situation",
+    "public"."person_attributes"."Patient_code" AS "Patient_code",
+    "public"."person_attributes"."City_Village_Camp" AS "City_Village_Camp",
+    cohort.initial_visit_date AS Enrollment_Date, 
     Last_FUP.date AS Date_of_last_FUP, 
     Agg_diag.aggregated_diagnoses AS Diagnoses,
     Last_discharge.date AS Date_of_Discharge,
@@ -360,7 +403,6 @@ SELECT
              OR ncd_pivot.diabetes_type2 IS NOT NULL 
         THEN 1 
     END AS Diabetes_any,
-    
     Last_Foot_Exam_Date.last_foot_exam_date AS "Last Foot Exam Date",
     Last_Missed_Med_Doses.last_missed_med_doses_date AS "Last Missed Medication Doses Date",
     Last_Eye_Exam_Date.last_eye_exam_date AS "Last Eye Exam Date",
@@ -370,61 +412,69 @@ SELECT
     Last_Vitals_Labs_Date.last_systolic_bp AS "Last Systolic BP",
     Last_Vitals_Labs_Date.last_diastolic_bp AS "Last Diastolic BP",
     Last_Vitals_Labs_Date.last_hba1c AS "Last HbA1c", Last_Vitals_Labs_Date.last_fbg AS "Last Fasting Blood Glucose",
-    
+    Last_Vitals_Labs_Date.last_BMI AS "Last BMI", Last_Vitals_Labs_Date.last_BMI_date AS "Last BMI Date",
     CASE WHEN ((DATE_PART('year', CURRENT_DATE) - DATE_PART('year', Last_initial.date)) * 12 + (DATE_PART('month', CURRENT_DATE) - DATE_PART('month', Last_initial.date))) >= 6 AND Last_discharge.date IS NULL THEN 'Yes' END AS in_cohort_6m,
 	CASE WHEN Last_Vitals_Labs_Date.last_systolic_bp <= 140 AND Last_Vitals_Labs_Date.last_diastolic_bp <= 90 THEN 'Yes' WHEN Last_Vitals_Labs_Date.last_systolic_bp > 140 OR Last_Vitals_Labs_Date.last_diastolic_bp > 90 THEN 'No'
 	END AS blood_pressure_control,
-	CASE WHEN Last_Vitals_Labs_Date.last_hba1c < 8 THEN 'Yes' WHEN Last_Vitals_Labs_Date.last_hba1c >= 8 THEN 'No' WHEN Last_Vitals_Labs_Date.last_hba1c IS NULL AND Last_Vitals_Labs_Date.last_fbg < 150 THEN 'Yes' WHEN Last_Vitals_Labs_Date.last_hba1c IS NULL AND Last_Vitals_Labs_Date.last_fbg >= 150 THEN 'No' END AS diabetes_control
-
-
+	CASE WHEN Last_Vitals_Labs_Date.last_hba1c < 8 THEN 'Yes' WHEN Last_Vitals_Labs_Date.last_hba1c >= 8 THEN 'No' WHEN Last_Vitals_Labs_Date.last_hba1c IS NULL AND Last_Vitals_Labs_Date.last_fbg < 150 THEN 'Yes' WHEN Last_Vitals_Labs_Date.last_hba1c IS NULL AND Last_Vitals_Labs_Date.last_fbg >= 150 THEN 'No' END AS diabetes_control,
+	cohort.readmission AS Readmission
 
 FROM
-    public.patient_information_view pat_info
+    cohort
 
 LEFT OUTER JOIN public.patient_identifier 
-    ON public.patient_identifier.patient_id = pat_info.patient_id
+    ON public.patient_identifier.patient_id = cohort.patient_id
 
 LEFT OUTER JOIN First_initial 
-    ON First_initial.patient_id = pat_info.patient_id
+    ON First_initial.patient_id = cohort.patient_id
 
 LEFT OUTER JOIN Last_FUP 
-    ON Last_FUP.patient_id = pat_info.patient_id
+    ON Last_FUP.patient_id = cohort.patient_id
 
 LEFT OUTER JOIN Initial_diagnosis diag 
-    ON diag.patient_id = pat_info.patient_id
+    ON diag.patient_id = cohort.patient_id
 
 LEFT OUTER JOIN Last_discharge 
-    ON Last_discharge.patient_id = pat_info.patient_id
+    ON Last_discharge.patient_id = cohort.patient_id
 
 LEFT OUTER JOIN Aggregated_Diagnoses Agg_diag 
-    ON Agg_diag.patient_id = pat_info.patient_id
+    ON Agg_diag.patient_id = cohort.patient_id
 
 LEFT OUTER JOIN Last_initial 
-    ON Last_initial.patient_id = pat_info.patient_id
+    ON Last_initial.patient_id = cohort.patient_id
 
 LEFT OUTER JOIN Last_Visit_Location 
-    ON Last_Visit_Location.patient_id = pat_info.patient_id
+    ON Last_Visit_Location.patient_id = cohort.patient_id
 
 LEFT OUTER JOIN ncd_diagnosis_pivot ncd_pivot
-    ON ncd_pivot.patient_id = pat_info.patient_id
+    ON ncd_pivot.patient_id = cohort.patient_id
 
 LEFT OUTER JOIN ncd_risk_factors_pivot ncd_risk_pivot
-    ON ncd_risk_pivot.patient_id = pat_info.patient_id
+    ON ncd_risk_pivot.patient_id = cohort.patient_id
 
 LEFT OUTER JOIN Last_Foot_Exam_Date 
-    ON Last_Foot_Exam_Date.patient_id = pat_info.patient_id
+    ON Last_Foot_Exam_Date.patient_id = cohort.patient_id
 
 LEFT OUTER JOIN Last_Missed_Med_Doses 
-    ON Last_Missed_Med_Doses.patient_id = pat_info.patient_id
+    ON Last_Missed_Med_Doses.patient_id = cohort.patient_id
     
 LEFT OUTER JOIN Last_Eye_Exam_Date
-    ON Last_Eye_Exam_Date.patient_id = pat_info.patient_id
+    ON Last_Eye_Exam_Date.patient_id = cohort.patient_id
     
 LEFT OUTER JOIN Last_Seizure_Date 
-    ON Last_Seizure_Date.patient_id = pat_info.patient_id
+    ON Last_Seizure_Date.patient_id = cohort.patient_id
     
 LEFT OUTER JOIN Last_Vitals_Labs_Date 
-    ON Last_Vitals_Labs_Date.patient_id = pat_info.patient_id
+    ON Last_Vitals_Labs_Date.patient_id = cohort.patient_id
+    
+LEFT OUTER JOIN initial 
+    ON initial.patient_id = cohort.patient_id
+    
+LEFT OUTER JOIN public.person_details_default
+    ON public.person_details_default.person_id = cohort.patient_id
+	
+LEFT OUTER JOIN public.person_attributes
+    ON person_attributes.person_id = cohort.patient_id
     
 WHERE 
     "public"."patient_identifier"."Patient_Identifier" IS NOT NULL;
