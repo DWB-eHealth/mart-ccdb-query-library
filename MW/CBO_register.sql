@@ -1,19 +1,19 @@
 -- CTE with registration information (ID, address and gender) (!! one patient is missing Patient ID 97 she has no MSF ID)
-WITH patient_attributes AS (
-    SELECT person_id AS patient_id, "MSF_ID", "PrEP_ID", "Nationality", "Literacy"
-    FROM person_attributes),
-address AS (
-    SELECT person_id AS patient_id, city_village, state_province AS ta, county_district
-    FROM person_address_default),
+WITH pi AS (
+    SELECT patient_id, "Patient_Identifier"
+    FROM patient_identifier),
 gender AS (
     SELECT gender, person_id AS patient_id
     FROM person_details_default),
-pi AS (
-    SELECT patient_id, "Patient_Identifier"
-    FROM patient_identifier),
+address AS (
+    SELECT person_id AS patient_id, city_village, state_province AS ta, county_district
+    FROM person_address_default),
+patient_attributes AS (
+    SELECT person_id AS patient_id, "MSF_ID", "PrEP_ID", "Nationality", "Literacy"
+    FROM person_attributes),
 registration AS (
     SELECT 
-        pa.patient_id,
+        pi.patient_id,
         pa."MSF_ID",
         pa."PrEP_ID",
         pa."Nationality",
@@ -22,11 +22,11 @@ registration AS (
         a.ta AS TA,
         a.county_district,
         g.gender,
-        p."Patient_Identifier"
-    FROM patient_attributes pa
-    LEFT OUTER JOIN address a USING (patient_id)
+        pi."Patient_Identifier"
+    FROM pi 
     LEFT OUTER JOIN gender g USING (patient_id)
-    LEFT OUTER JOIN pi p USING (patient_id)),
+    LEFT OUTER JOIN address a USING (patient_id)
+    LEFT OUTER JOIN patient_attributes pa USING (patient_id)),
 
 -- CTE for the information about the initial visit (date, location, HIV status and PrEP)    
 initial AS (
@@ -320,45 +320,3 @@ LEFT OUTER JOIN last_lab_pregnancy USING (patient_id)
 LEFT OUTER JOIN last_lab_hpv USING (patient_id)
 LEFT OUTER JOIN last_lab_creat USING (patient_id)
 LEFT OUTER JOIN last_lab_gfr USING (patient_id);
-
-
-
-
-
-
--- CTE with info on contraceptive on going (done :) )
-WITH co AS (
-    SELECT DISTINCT ON (contraceptive_ongoing.patient_id, contraceptive_ongoing.contraceptive_ongoing) 
-        contraceptive_ongoing.patient_id, 
-        contraceptive_ongoing.encounter_id, 
-        cf.date_of_visit AS date_contraceptive_ongoing, 
-        contraceptive_ongoing.contraceptive_ongoing
-    FROM contraceptive_ongoing 
-    LEFT JOIN "1_client_form" cf USING (patient_id)
-    ORDER BY contraceptive_ongoing.patient_id, contraceptive_ongoing.contraceptive_ongoing, cf.date_of_visit),
-
-co_pivot AS (
-    SELECT 
-        DISTINCT ON (co.encounter_id, co.patient_id) co.encounter_id, 
-        co.patient_id, 
-        MAX(CASE WHEN co.contraceptive_ongoing = 'Injectable' THEN co.date_contraceptive_ongoing END) AS Injectable_ongoing,
-        MAX(CASE WHEN co.contraceptive_ongoing = 'Implant' THEN  co.date_contraceptive_ongoing END) AS Implant_ongoing,
-        MAX(CASE WHEN co.contraceptive_ongoing = 'Oral contraceptive pill' THEN  co.date_contraceptive_ongoing END) AS Oral_contraceptive_pill_ongoing,
-        MAX(CASE WHEN co.contraceptive_ongoing = 'Condom' THEN co.date_contraceptive_ongoing END) AS Condom_ongoing,
-        MAX(CASE WHEN co.contraceptive_ongoing = 'Emergency contraceptive pill' THEN  co.date_contraceptive_ongoing END) AS Emergency_contraceptive_pill_ongoing,
-        MAX(CASE WHEN co.contraceptive_ongoing = 'IUCD' THEN  co.date_contraceptive_ongoing END) AS IUCD_ongoing
-    FROM co
-    GROUP BY co.encounter_id, co.patient_id),
-co_list AS (
-	SELECT encounter_id, STRING_AGG(contraceptive_ongoing, ', ') AS list_contraceptive_ongoing
-	FROM co
-	GROUP BY encounter_id),
-
-co_table AS (
-SELECT co.patient_id, co.encounter_id, co.date_contraceptive_ongoing, co.contraceptive_ongoing, cop.Injectable_ongoing, cop.Implant_ongoing, cop.Oral_contraceptive_pill_ongoing, cop.Condom_ongoing, cop.Emergency_contraceptive_pill_ongoing, cop.IUCD_ongoing, col.list_contraceptive_ongoing
-FROM co
-LEFT JOIN co_pivot cop ON co.patient_id = cop.patient_id AND co.encounter_id = cop.encounter_id
-LEFT JOIN co_list col ON co.patient_id = cop.patient_id AND co.encounter_id = col.encounter_id)
-
-SELECT *
-FROM co_table;
