@@ -5,20 +5,23 @@ WITH inclusion AS (
 	FROM mnt_vih_tb WHERE type_de_visite = 'Inclusion'),
 cohorte AS (
 	SELECT
-		i.patient_id, i.encounter_id_inclusion, i.lieu_de_visite_inclusion, i.date_inclusion, CASE WHEN i.inclusion_visit_order > 1 THEN 'Oui' END readmission, d.encounter_id AS encounter_id_sortie, CASE WHEN d.date_de_sortie IS NOT NULL THEN d.date_de_sortie WHEN d.date_de_sortie IS NULL THEN d.date ELSE NULL END AS date_de_sortie, d.statut_de_sortie AS statut_de_sortie
+		i.patient_id, i.encounter_id_inclusion, i.lieu_de_visite_inclusion, i.date_inclusion, CASE WHEN i.inclusion_visit_order > 1 THEN 'Oui' END readmission, d.encounter_id AS encounter_id_sortie, date_de_sortie, d.statut_de_sortie AS statut_de_sortie
 	FROM inclusion i
-	LEFT JOIN (SELECT patient_id, date, encounter_id, date_de_sortie, statut_de_sortie FROM mnt_vih_tb WHERE type_de_visite = 'Sortie') d 
-		ON i.patient_id = d.patient_id AND d.date >= i.date_inclusion AND (d.date < i.date_inclusion_suivi OR i.date_inclusion_suivi IS NULL)),
+	LEFT JOIN (SELECT patient_id, encounter_id, COALESCE(date_de_sortie, date) AS date_de_sortie, statut_de_sortie FROM mnt_vih_tb WHERE type_de_visite = 'Sortie') d 
+		ON i.patient_id = d.patient_id AND d.date_de_sortie >= i.date_inclusion AND (d.date_de_sortie < i.date_inclusion_suivi OR i.date_inclusion_suivi IS NULL)),
 -- The PTPE CTE looks at if the patient has a PTPE form completed. 
 dernière_ptpe AS (
-	SELECT 
-		DISTINCT ON (c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie) c.encounter_id_inclusion,
-		ptpe.date AS date_derniere_ptpe
-	FROM cohorte c
-	LEFT OUTER JOIN ptpe
-		ON c.patient_id = ptpe.patient_id AND c.date_inclusion <= ptpe.date::date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE current_date END >= ptpe.date::date
-	GROUP BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, ptpe.date
-	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, ptpe.date DESC),
+	SELECT patient_id, encounter_id_inclusion, date_derniere_ptpe
+	FROM (
+		SELECT
+			c.patient_id, 
+			c.encounter_id_inclusion, 
+			ptpe.date AS date_derniere_ptpe,
+			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY ptpe.date DESC) AS rn
+		FROM cohorte c
+		LEFT OUTER JOIN ptpe
+			ON c.patient_id = ptpe.patient_id AND c.date_inclusion <= ptpe.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= ptpe.date::date) foo
+	WHERE rn = 1),
 -- The last completed form CTE looks at the last date and type of visit for each patient based on the clinical forms (including MNT VIH TB, PTPE).
 dernière_fiche AS (
 	SELECT 
@@ -27,20 +30,19 @@ dernière_fiche AS (
 		forms.dernière_fiche_type,
 		CASE WHEN forms.form_field_path = 'NCD2' THEN 'MNT/VIH/TB' WHEN forms.form_field_path = 'PMTCT' THEN 'PTPE' ELSE NULL END AS type_derniere_fiche
 	FROM cohorte c
-	LEFT OUTER JOIN (SELECT patient_id, CASE WHEN type_de_visite = 'Sortie' AND date_de_sortie IS NOT NULL THEN date_de_sortie 
-	ELSE date END AS date, type_de_visite AS dernière_fiche_type, form_field_path FROM mnt_vih_tb UNION SELECT patient_id, date, type_de_visite AS dernière_fiche_type, form_field_path FROM ptpe) forms
-		ON c.patient_id = forms.patient_id AND c.date_inclusion <= forms.date::date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE current_date END >= forms.date::date
+	LEFT OUTER JOIN (SELECT patient_id, COALESCE(date_de_sortie, date) AS date, type_de_visite AS dernière_fiche_type, form_field_path FROM mnt_vih_tb UNION SELECT patient_id, date, type_de_visite AS dernière_fiche_type, form_field_path FROM ptpe) forms
+		ON c.patient_id = forms.patient_id AND c.date_inclusion <= forms.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= forms.date::date
 	GROUP BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, forms.date, forms.dernière_fiche_type, forms.form_field_path
-	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, forms.date DESC, forms.form_field_path),
+	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, forms.form_field_path, forms.date DESC),
 -- The last visit location CTE finds the last visit location reported in clinical forms (including MNT VIH TB, PTPE).
 dernière_fiche_location AS (	
 	SELECT 
 		DISTINCT ON (c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie) c.encounter_id_inclusion,
 		forms.lieu_de_visite AS dernière_fiche_location
 	FROM cohorte c
-	LEFT OUTER JOIN (SELECT patient_id, CASE WHEN type_de_visite = 'Sortie' AND date_de_sortie IS NOT NULL THEN date_de_sortie ELSE date END AS date, lieu_de_visite FROM mnt_vih_tb UNION 
+	LEFT OUTER JOIN (SELECT patient_id, COALESCE(date_de_sortie, date) AS date, lieu_de_visite FROM mnt_vih_tb UNION 
 	SELECT patient_id, date, lieu_de_visite FROM ptpe) forms
-		ON c.patient_id = forms.patient_id AND c.date_inclusion <= forms.date::date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE current_date END >= forms.date::date
+		ON c.patient_id = forms.patient_id AND c.date_inclusion <= forms.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= forms.date::date
 	WHERE forms.lieu_de_visite IS NOT NULL
 	GROUP BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, forms.date, forms.lieu_de_visite
 	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, forms.date DESC),
@@ -50,7 +52,7 @@ diagnostic_cohorte AS (
 		DISTINCT ON (d.patient_id, d.diagnostic) d.patient_id, c.encounter_id_inclusion, n.date, d.diagnostic
 	FROM diagnostic d 
 	LEFT JOIN mnt_vih_tb n USING(encounter_id)
-	LEFT JOIN cohorte c ON d.patient_id = c.patient_id AND c.date_inclusion <= n.date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE current_date END >= n.date
+	LEFT JOIN cohorte c ON d.patient_id = c.patient_id AND c.date_inclusion <= n.date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date
 	ORDER BY d.patient_id, d.diagnostic, n.date),
 diagnostic_cohorte_pivot AS (
 	SELECT 
@@ -85,13 +87,25 @@ diagnostic_cohorte_liste AS (
 	SELECT encounter_id_inclusion, STRING_AGG(diagnostic, ', ') AS liste_diagnostic
 	FROM diagnostic_cohorte
 	GROUP BY encounter_id_inclusion),
+-- The comorbidités CTE selects all reported comorbidities per cohort enrollment, listing the data horizonally.
+comorbidités_cohorte AS (
+	SELECT
+		DISTINCT ON (cm.patient_id, cm.comorbidités) cm.patient_id, c.encounter_id_inclusion, n.date, cm.comorbidités
+	FROM comorbidités cm 
+	LEFT JOIN mnt_vih_tb n USING(encounter_id)
+	LEFT JOIN cohorte c ON cm.patient_id = c.patient_id AND c.date_inclusion <= n.date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date
+	ORDER BY cm.patient_id, cm.comorbidités, n.date),
+comorbidités_cohorte_liste AS (
+	SELECT encounter_id_inclusion, STRING_AGG(comorbidités, ', ') AS liste_comorbidities
+	FROM comorbidités_cohorte
+	GROUP BY encounter_id_inclusion),
 -- The risk factor CTE pivots the risk factor data horizontally from the MNT VIH TB form. Only the last risk factors are reported per cohort enrollment are present. 
 facteurs_risque_cohorte AS (
 	SELECT
 		DISTINCT ON (fr.patient_id, fr.facteurs_de_risque) fr.patient_id, c.encounter_id_inclusion, n.date, fr.facteurs_de_risque
 	FROM facteurs_de_risque fr
-	LEFT JOIN mnt_vih_tb n USING(encounter_id)  
-	LEFT JOIN cohorte c ON fr.patient_id = c.patient_id AND c.date_inclusion <= n.date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE current_date END >= n.date
+	LEFT JOIN mnt_vih_tb n USING(encounter_id) 
+	LEFT JOIN cohorte c ON fr.patient_id = c.patient_id AND c.date_inclusion <= n.date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date
 	ORDER BY fr.patient_id, fr.facteurs_de_risque, n.date),
 facteurs_risque_pivot AS (
 	SELECT 
@@ -104,25 +118,25 @@ facteurs_risque_pivot AS (
 		MAX (CASE WHEN facteurs_de_risque = 'Other' THEN 'Oui' ELSE NULL END) AS autre_facteurs_risque
 	FROM facteurs_risque_cohorte
 	GROUP BY encounter_id_inclusion, patient_id),
--- The ARV initiation CTE provides the ARV initiation date reported in the MNT VIH TB form. The firt date of ARV initiation is reported. 
+-- The ARV initiation CTE provides the ARV initiation date reported in the MNT VIH TB form. The first date of ARV initiation is reported. 
 instauration_arv AS (
 	SELECT 
 		DISTINCT ON (c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie) c.encounter_id_inclusion,
 		mvt.date_d_instauration_des_arv AS date_instauration_arv
 	FROM cohorte c
 	LEFT OUTER JOIN mnt_vih_tb mvt
-		ON c.patient_id = mvt.patient_id AND c.date_inclusion <= mvt.date::date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE current_date END >= mvt.date::date
+		ON c.patient_id = mvt.patient_id AND c.date_inclusion <= mvt.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= mvt.date::date
 	WHERE mvt.date_d_instauration_des_arv IS NOT NULL
 	GROUP BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, mvt.date, mvt.date_d_instauration_des_arv
 	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, mvt.date ASC),
--- The ARV initiation CTE provides the ARV initiation date reported in the MNT VIH TB form. The firt date of ARV initiation is reported. 
+-- The ARV treatment CTE provides the ARV initiation date reported in the MNT VIH TB form. The most recent ARV treatment is reported. 
 traitement_arv AS (
 	SELECT 
 		DISTINCT ON (c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie) c.encounter_id_inclusion,
 		mvt.traitement_arv
 	FROM cohorte c
 	LEFT OUTER JOIN mnt_vih_tb mvt
-		ON c.patient_id = mvt.patient_id AND c.date_inclusion <= mvt.date::date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE current_date END >= mvt.date::date
+		ON c.patient_id = mvt.patient_id AND c.date_inclusion <= mvt.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= mvt.date::date
 	WHERE mvt.traitement_arv IS NOT NULL
 	GROUP BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, mvt.date, mvt.traitement_arv
 	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, mvt.date DESC),
@@ -132,7 +146,7 @@ médicament_arv AS (
 		c.patient_id, c.encounter_id_inclusion, mdd.coded_drug_name
 	FROM cohorte c 
 	LEFT OUTER JOIN medication_data_default mdd
-		ON c.patient_id = mdd.patient_id AND c.date_inclusion <= mdd.start_date::date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE current_date END >= mdd.start_date::date
+		ON c.patient_id = mdd.patient_id AND c.date_inclusion <= mdd.start_date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= mdd.start_date::date
 	WHERE mdd.coded_drug_name IN ('ABC 120 mg / 3TC 60 mg, disp. tab.','ABC 600 mg / 3TC 300 mg, tab.','ATV 300 mg / r 100 mg, tab.','AZT 60 mg / 3TC 30 mg , disp. tab.','DARUNAVIR ethanolate (DRV), eq. 600 mg base, tab.','DOLUTEGRAVIR sodium (DTG), eq. 10mg base, disp. tab.','DOLUTEGRAVIR sodium (DTG), eq. 50 mg base, tab.','DORALPVR1P- LPV 40 mg / r 10 mg, granules dans gélule','LPV 200mg / r 50mg, tab.','TDF 300 mg / FTC 200 mg / DTG 50 mg, tab.','TDF 300 mg / FTC 200 mg, tab.','TDF 300mg / 3TC 300mg / DTG 50mg, tab.') AND mdd.calculated_end_date > CURRENT_DATE AND mdd.date_stopped IS NULL),
 médicament_arv_list AS (
 	SELECT
@@ -142,103 +156,217 @@ médicament_arv_list AS (
 	GROUP BY encounter_id_inclusion),
 -- The last HIV CTE provides the last HIV test result and date per patient, both routine and confirmation test are considered. Only tests with both a date and result are included. If a confirmation test result is present then it is reported, if a confirmation test result is not present then the routine test result is reported. 
 dernière_test_vih AS (
-	SELECT
-		DISTINCT ON (c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie) c.encounter_id_inclusion, 
-		svil.date_test_vih,
-		svil.test_vih 
-	FROM cohorte c 
-	LEFT OUTER JOIN (SELECT 
-			patient_id, 
-			CASE WHEN date_de_test_vih_de_confirmation IS NOT NULL AND test_vih_de_confirmation IS NOT NULL THEN date_de_test_vih_de_confirmation WHEN (date_de_test_vih_de_confirmation IS NULL OR test_vih_de_confirmation IS NULL) AND date_de_test_vih_de_routine IS NOT NULL AND test_vih_de_routine IS NOT NULL THEN date_de_test_vih_de_routine ELSE NULL END AS date_test_vih, 
-			CASE WHEN date_de_test_vih_de_confirmation IS NOT NULL AND test_vih_de_confirmation IS NOT NULL THEN test_vih_de_confirmation WHEN (date_de_test_vih_de_confirmation IS NULL OR test_vih_de_confirmation IS NULL) AND date_de_test_vih_de_routine IS NOT NULL AND test_vih_de_routine IS NOT NULL THEN test_vih_de_routine ELSE NULL END AS test_vih 
-		FROM signes_vitaux_et_informations_laboratoire
-		WHERE (date_de_test_vih_de_confirmation IS NOT NULL AND test_vih_de_confirmation IS NOT NULL) OR (date_de_test_vih_de_routine IS NOT NULL AND test_vih_de_routine IS NOT NULL)) svil 
-		ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date_test_vih::date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE CURRENT_DATE END >= svil.date_test_vih::date
-	GROUP BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, svil.date_test_vih, svil.test_vih 
-	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, svil.date_test_vih DESC),	
+	SELECT patient_id, encounter_id_inclusion, date_test_vih, test_vih
+	FROM (
+		SELECT
+			c.patient_id, 
+			c.encounter_id_inclusion, 
+			svil.date_test_vih,
+			svil.test_vih, 
+			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY svil.date_test_vih DESC) AS rn
+		FROM cohorte c 
+		LEFT OUTER JOIN (
+			SELECT 
+				patient_id, 
+				CASE WHEN date_de_test_vih_de_confirmation IS NOT NULL AND test_vih_de_confirmation IS NOT NULL THEN date_de_test_vih_de_confirmation WHEN (date_de_test_vih_de_confirmation IS NULL OR test_vih_de_confirmation IS NULL) AND date_de_test_vih_de_routine IS NOT NULL AND test_vih_de_routine IS NOT NULL THEN date_de_test_vih_de_routine ELSE NULL END AS date_test_vih, 
+				CASE WHEN date_de_test_vih_de_confirmation IS NOT NULL AND test_vih_de_confirmation IS NOT NULL THEN test_vih_de_confirmation WHEN (date_de_test_vih_de_confirmation IS NULL OR test_vih_de_confirmation IS NULL) AND date_de_test_vih_de_routine IS NOT NULL AND test_vih_de_routine IS NOT NULL THEN test_vih_de_routine ELSE NULL END AS test_vih 
+			FROM signes_vitaux_et_informations_laboratoire
+			WHERE (date_de_test_vih_de_confirmation IS NOT NULL AND test_vih_de_confirmation IS NOT NULL) OR (date_de_test_vih_de_routine IS NOT NULL AND test_vih_de_routine IS NOT NULL)) svil 
+			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date_test_vih::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_test_vih::date) foo
+	WHERE rn = 1),	
 -- The last CD4 CTE provides the last CD4 result and date per patient. Only tests with both a date and result are included. If the prélèvement date is completed, then this data is reported. If no pélèvement date is completed, then the récéption date is reported. 
 dernière_cd4 AS (
-	SELECT
-		DISTINCT ON (c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie) c.encounter_id_inclusion, 
-		svil.date_cd4, 
-		svil.résultat_brut_cd4
-	FROM cohorte c 
-	LEFT OUTER JOIN (SELECT 
-			patient_id, 
-			CASE WHEN date_de_prélèvement_cd4 IS NOT NULL THEN date_de_prélèvement_cd4 WHEN date_de_prélèvement_cd4 IS NULL THEN date_de_récéption_des_résultats_cd4 ELSE NULL END AS date_cd4, 
-			résultat_brut_cd4
-		FROM signes_vitaux_et_informations_laboratoire_cd4
-		WHERE résultat_brut_cd4 IS NOT NULL AND encounter_id > 14375
-		UNION
+	SELECT patient_id, encounter_id_inclusion, date_cd4, résultat_brut_cd4
+	FROM (
 		SELECT
-			patient_id, 
-    		CASE WHEN MAX(date_de_prélèvement_cd4) IS NOT NULL THEN MAX(date_de_prélèvement_cd4) WHEN MAX(date_de_prélèvement_cd4) IS NULL THEN MAX(date_de_récéption_des_résultats_cd4) ELSE NULL END AS date_cd4, 
-    		MAX(résultat_brut_cd4)
-		FROM signes_vitaux_et_informations_laboratoire_cd4
-		WHERE  encounter_id <= 14375
-		GROUP BY encounter_id, patient_id) svil 
-		ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date_cd4::date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE CURRENT_DATE END >= svil.date_cd4::date
-	GROUP BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, date_cd4, résultat_brut_cd4
-	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, date_cd4 DESC),
+			c.patient_id, 
+			c.encounter_id_inclusion,  
+			svil.date_cd4, 
+			svil.résultat_brut_cd4,
+			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY svil.date_cd4 DESC) AS rn
+		FROM cohorte c 
+		LEFT OUTER JOIN (
+			SELECT 
+				patient_id, 
+				CASE WHEN date_de_prélèvement_cd4 IS NOT NULL THEN date_de_prélèvement_cd4 WHEN date_de_prélèvement_cd4 IS NULL THEN date_de_récéption_des_résultats_cd4 ELSE NULL END AS date_cd4, 
+				résultat_brut_cd4
+			FROM signes_vitaux_et_informations_laboratoire_cd4
+			WHERE résultat_brut_cd4 IS NOT NULL AND encounter_id > 14375
+			UNION
+			SELECT
+				patient_id, 
+			CASE WHEN MAX(date_de_prélèvement_cd4) IS NOT NULL THEN MAX(date_de_prélèvement_cd4) WHEN MAX(date_de_prélèvement_cd4) IS NULL THEN MAX(date_de_récéption_des_résultats_cd4) ELSE NULL END AS date_cd4, 
+			MAX(résultat_brut_cd4)
+			FROM signes_vitaux_et_informations_laboratoire_cd4
+			WHERE encounter_id <= 14375
+			GROUP BY encounter_id, patient_id) svil 
+			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date_cd4::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_cd4::date) foo
+	WHERE rn = 1),
 -- The last viral load CTE provides the last viral load result and date per patient. Only tests with both a date and result are included. If the prélèvement date is completed, then this data is reported. If no pélèvement date is completed, then the récéption date is reported. 
 dernière_charge_virale_vih AS (
-	SELECT
-		DISTINCT ON (c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie) c.encounter_id_inclusion, 
-		svil.date_charge_virale_vih, 
-		svil.résultat_brut_charge_virale_vih
-	FROM cohorte c 
-	LEFT OUTER JOIN (SELECT 
-			patient_id, 
-			CASE WHEN date_de_prélèvement_charge_virale_vih IS NOT NULL THEN date_de_prélèvement_charge_virale_vih WHEN date_de_prélèvement_charge_virale_vih IS NULL THEN date_de_réception_des_résultats_charge_virale_vih ELSE NULL END AS date_charge_virale_vih, 
-			résultat_brut_charge_virale_vih
-		FROM signes_vitaux_et_informations_laboratoire_charge_virale_vih
-		WHERE résultat_brut_charge_virale_vih IS NOT NULL AND encounter_id > 14371
-		UNION
+	SELECT patient_id, encounter_id_inclusion, date_charge_virale_vih, résultat_brut_charge_virale_vih
+	FROM (
 		SELECT
-			patient_id, 
-    		CASE WHEN MAX(date_de_prélèvement_charge_virale_vih) IS NOT NULL THEN MAX(date_de_prélèvement_charge_virale_vih) WHEN MAX(date_de_prélèvement_charge_virale_vih) IS NULL THEN MAX(date_de_réception_des_résultats_charge_virale_vih) ELSE NULL END AS date_charge_virale_vih, 
-    		MAX(résultat_brut_charge_virale_vih) AS résultat_brut_charge_virale_vih
-		FROM signes_vitaux_et_informations_laboratoire_charge_virale_vih
-		WHERE  encounter_id <= 14371
-		GROUP BY encounter_id, patient_id) svil 
-		ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date_charge_virale_vih::date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE CURRENT_DATE END >= svil.date_charge_virale_vih::date
-	GROUP BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, date_charge_virale_vih, résultat_brut_charge_virale_vih
-	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, date_charge_virale_vih DESC),
+			c.patient_id, 
+			c.encounter_id_inclusion, 
+			svil.date_charge_virale_vih, 
+			svil.résultat_brut_charge_virale_vih,
+			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY svil.date_charge_virale_vih DESC) AS rn
+		FROM cohorte c 
+		LEFT OUTER JOIN (
+			SELECT 
+				patient_id, 
+				CASE WHEN date_de_prélèvement_charge_virale_vih IS NOT NULL THEN date_de_prélèvement_charge_virale_vih WHEN date_de_prélèvement_charge_virale_vih IS NULL THEN date_de_réception_des_résultats_charge_virale_vih ELSE NULL END AS date_charge_virale_vih, 
+				résultat_brut_charge_virale_vih
+			FROM signes_vitaux_et_informations_laboratoire_charge_virale_vih
+			WHERE résultat_brut_charge_virale_vih IS NOT NULL AND encounter_id > 14371
+			UNION
+			SELECT
+				patient_id, 
+				CASE WHEN MAX(date_de_prélèvement_charge_virale_vih) IS NOT NULL THEN MAX(date_de_prélèvement_charge_virale_vih) WHEN MAX(date_de_prélèvement_charge_virale_vih) IS NULL THEN MAX(date_de_réception_des_résultats_charge_virale_vih) ELSE NULL END AS date_charge_virale_vih, 
+				MAX(résultat_brut_charge_virale_vih) AS résultat_brut_charge_virale_vih
+			FROM signes_vitaux_et_informations_laboratoire_charge_virale_vih
+			WHERE encounter_id <= 14371
+			GROUP BY encounter_id, patient_id) svil 
+			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date_charge_virale_vih::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_charge_virale_vih::date) foo
+	WHERE rn = 1),
 -- The last blood pressure CTE extracts the last complete blood pressure measurements reported per cohort enrollment. Only blood pressures with a date, systolic, and diastolic information are reported.
 dernière_pression_artérielle AS (
-	SELECT 
-		DISTINCT ON (c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie) c.encounter_id_inclusion, 
-		svil.date AS date_dernière_pression_artérielle,
-		svil.tension_arterielle_systolique AS dernière_pression_artérielle_systolique,
-		svil.tension_arterielle_diastolique AS dernière_pression_artérielle_diastolique
-	FROM cohorte c
-	LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
-		ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE current_date END >= svil.date::date
-	WHERE svil.date IS NOT NULL AND svil.tension_arterielle_systolique IS NOT NULL AND svil.tension_arterielle_diastolique IS NOT NULL
-	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, svil.date DESC),
+	SELECT patient_id, encounter_id_inclusion, date_dernière_pression_artérielle, dernière_pression_artérielle_systolique, dernière_pression_artérielle_diastolique
+	FROM (
+		SELECT 
+			c.patient_id, 
+			c.encounter_id_inclusion, 
+			svil.date AS date_dernière_pression_artérielle,
+			svil.tension_arterielle_systolique AS dernière_pression_artérielle_systolique,
+			svil.tension_arterielle_diastolique AS dernière_pression_artérielle_diastolique, 
+			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY svil.date DESC) AS rn
+		FROM cohorte c
+		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
+			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
+		WHERE svil.date IS NOT NULL AND svil.tension_arterielle_systolique IS NOT NULL AND svil.tension_arterielle_diastolique IS NOT NULL) foo
+	WHERE rn = 1),
 -- The last BMI CTE extracts the last BMI measurement reported per cohort enrollment. Only BMI records with a date, weight, and height are reported.
-dernère_imc AS (
+dernière_imc AS (
+	SELECT patient_id, encounter_id_inclusion, date_dernière_imc, dernière_imc
+	FROM (
+		SELECT
+			c.patient_id, 
+			c.encounter_id_inclusion, 
+			svil.date AS date_dernière_imc,
+			svil.indice_de_masse_corporelle AS dernière_imc, 
+			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY svil.date DESC) AS rn
+		FROM cohorte c
+		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
+			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
+		WHERE svil.date IS NOT NULL AND svil.indice_de_masse_corporelle IS NOT NULL) foo
+	WHERE rn = 1),
+-- The last HbA1c CTE extracts the last HbA1c measurement reported per cohort enrollment. Only HbA1c records with a date and result value are reported.
+dernière_hba1c AS (
+	SELECT patient_id, encounter_id_inclusion, date_dernière_hba1c, dernière_hba1c
+	FROM (
+		SELECT 
+			c.patient_id, 
+			c.encounter_id_inclusion, 
+			COALESCE(svil.date_de_prélèvement, svil.date) AS date_dernière_hba1c,
+			svil.hba1c AS dernière_hba1c, 
+			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
+		FROM cohorte c
+		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
+			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
+		WHERE COALESCE(svil.date_de_prélèvement, svil.date) IS NOT NULL AND svil.hba1c IS NOT NULL) foo
+	WHERE rn = 1),
+-- The last glycémie CTE extracts the last glycémie measurement reported per cohort enrollment. Only glycémie records with a date and result value are reported.
+dernière_glycémie AS (
+	SELECT patient_id, encounter_id_inclusion, date_dernière_glycémie, dernière_glycémie
+	FROM (
+		SELECT 
+			c.patient_id, 
+			c.encounter_id_inclusion, 
+			COALESCE(svil.date_de_prélèvement, svil.date) AS date_dernière_glycémie,
+			svil.glycémie AS dernière_glycémie, 
+			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
+		FROM cohorte c
+		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
+			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
+		WHERE COALESCE(svil.date_de_prélèvement, svil.date) IS NOT NULL AND svil.glycémie IS NOT NULL) foo
+	WHERE rn = 1),
+-- The last protéinurie CTE extracts the last protéinurie measurement reported per cohort enrollment. Only protéinurie records with a date and result value are reported.
+dernière_protéinurie AS (
+	SELECT patient_id, encounter_id_inclusion, date_dernière_protéinurie, dernière_protéinurie
+	FROM (
+		SELECT 
+			c.patient_id, 
+			c.encounter_id_inclusion, 
+			COALESCE(svil.date_de_prélèvement, svil.date) AS date_dernière_protéinurie,
+			svil.protéinurie AS dernière_protéinurie, 
+			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
+		FROM cohorte c
+		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
+			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
+		WHERE COALESCE(svil.date_de_prélèvement, svil.date) IS NOT NULL AND svil.protéinurie IS NOT NULL) foo
+	WHERE rn = 1),
+-- The last créatine  CTE extracts the last créatine measurement reported per cohort enrollment. Only créatine records with a date and result value are reported.
+dernière_créatine AS (
+	SELECT patient_id, encounter_id_inclusion, date_dernière_créatine, dernière_créatine
+	FROM (
+		SELECT 
+			c.patient_id, 
+			c.encounter_id_inclusion, 
+			COALESCE(svil.date_de_prélèvement, svil.date) AS date_dernière_créatine,
+			svil.créatine AS dernière_créatine, 
+			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
+		FROM cohorte c
+		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
+			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
+		WHERE COALESCE(svil.date_de_prélèvement, svil.date) IS NOT NULL AND svil.créatine IS NOT NULL) foo
+	WHERE rn = 1),
+-- The MNT VIH TB form CTE extracts the last MNT VIH TB visit data per cohort enrollment to look at if there are values reported for pregnancy, family planning, hospitalization, missed medication, seizures, or asthma/COPD exacerbations repoted at the last visit. 
+dernière_visite AS (
+	SELECT patient_id, encounter_id_inclusion, enceinte_dernière_visite, allaitante_dernière_visite, hospitalisé_signalée_dernière_visite, prise_de_médicaments_oubliée_signalée_dernière_visite, convulsions_signalée_dernière_visite, exacerbation_signalée_dernière_visite, nbr_exacerbation_signalée_dernière_visite
+	FROM (
+		SELECT 
+			c.patient_id,
+			c.encounter_id_inclusion,
+			CASE WHEN n.enceinte_actuellement = 'Oui' THEN 'Oui' END AS enceinte_dernière_visite,
+			CASE WHEN n.allaitante = 'Oui' THEN 'Oui' END AS allaitante_dernière_visite,
+			CASE WHEN n.hospitalisé_depuis_la_dernière_visite = 'Oui' THEN 'Oui' END AS hospitalisé_signalée_dernière_visite,
+			CASE WHEN n.prise_de_médicaments_oubliée_au_cours_des_7_derniers_jours = 'Oui' THEN 'Oui' END AS prise_de_médicaments_oubliée_signalée_dernière_visite,
+			CASE WHEN n.convulsions_depuis_la_derniere_consultation = 'Oui' THEN 'Oui' END AS convulsions_signalée_dernière_visite,
+			CASE WHEN n.exacerbation_par_semaine IS NOT NULL AND n.exacerbation_par_semaine > 0 THEN 'Oui' END AS exacerbation_signalée_dernière_visite,
+			n.exacerbation_par_semaine AS nbr_exacerbation_signalée_dernière_visite,
+			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY n.date DESC) AS rn
+		FROM cohorte c
+		LEFT OUTER JOIN mnt_vih_tb n
+			ON c.patient_id = n.patient_id AND c.date_inclusion <= n.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date::date) foo
+	WHERE rn = 1),
+-- The last gravité de l'asthme CTE extracts the last asthma severity reported per cohort enrollment.
+dernière_gravité_asthme AS (
+	SELECT patient_id, encounter_id_inclusion, date, dernière_gravité_asthme
+	FROM (
+		SELECT 
+			c.patient_id, 
+			c.encounter_id_inclusion,
+			n.date::date,
+			n.gravité_de_l_asthme AS dernière_gravité_asthme, 
+			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY n.date DESC) AS rn
+		FROM cohorte c
+		LEFT OUTER JOIN mnt_vih_tb n
+			ON c.patient_id = n.patient_id AND c.date_inclusion <= n.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date::date
+		WHERE n.gravité_de_l_asthme IS NOT NULL) foo
+	WHERE rn = 1),
+-- The hospitalised CTE checks there is a hospitlisation reported in visits taking place in the last 6 months. 
+hospitalisé_dernière_6m AS (
 	SELECT 
-		DISTINCT ON (c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie) c.encounter_id_inclusion, 
-		svil.date AS date_dernière_imc,
-		svil.indice_de_masse_corporelle AS dernière_imc
+		DISTINCT ON (c.patient_id, c.encounter_id_inclusion) c.patient_id, 
+		c.encounter_id_inclusion, 
+		COUNT(n.hospitalisé_depuis_la_dernière_visite) AS nb_hospitalisé_dernière_6m, 
+		CASE WHEN n.hospitalisé_depuis_la_dernière_visite IS NOT NULL THEN 'Oui' ELSE 'Non' END AS hospitalisé_dernière_6m
 	FROM cohorte c
-	LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
-		ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE current_date END >= svil.date::date
-	WHERE svil.date IS NOT NULL AND svil.indice_de_masse_corporelle IS NOT NULL
-	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, svil.date DESC),
--- The comorbidités CTE selects all reported comorbidities per cohort enrollment, listing the data horizonally.
-comorbidités_cohorte AS (
-	SELECT
-		DISTINCT ON (cm.patient_id, cm.comorbidités) cm.patient_id, c.encounter_id_inclusion, n.date, cm.comorbidités
-	FROM comorbidités cm 
-	LEFT JOIN mnt_vih_tb n USING(encounter_id)
-	LEFT JOIN cohorte c ON cm.patient_id = c.patient_id AND c.date_inclusion <= n.date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE current_date END >= n.date
-	ORDER BY cm.patient_id, cm.comorbidités, n.date),
-comorbidités_cohorte_liste AS (
-	SELECT encounter_id_inclusion, STRING_AGG(comorbidités, ', ') AS liste_comorbidities
-	FROM comorbidités_cohorte
-	GROUP BY encounter_id_inclusion)
+	LEFT OUTER JOIN mnt_vih_tb n
+		ON c.patient_id = n.patient_id AND c.date_inclusion <= n.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date::date
+	WHERE n.hospitalisé_depuis_la_dernière_visite = 'Oui' and n.date <= CURRENT_DATE and n.date >= CURRENT_DATE - INTERVAL '6 months'
+	GROUP BY c.patient_id, c.encounter_id_inclusion, n.hospitalisé_depuis_la_dernière_visite)
 -- Main query --
 SELECT
 	pi."Patient_Identifier",
@@ -280,9 +408,9 @@ SELECT
 	ELSE NULL END AS statut_civil,
 	CASE 
 		WHEN pa."Education_level" = 'No formal education' THEN 'Pas éducation formelle'
-		WHEN pa."Education_level" = 'Intermittent schooling' THEN 'Scolarisation intermittente'  
-		WHEN pa."Education_level" = 'Primary school education' THEN 'École primaire'  
-		WHEN pa."Education_level" = 'High school' THEN 'École secondaire'  
+		WHEN pa."Education_level" = 'Intermittent schooling' THEN 'Scolarisation intermittente' 
+		WHEN pa."Education_level" = 'Primary school education' THEN 'École primaire' 
+		WHEN pa."Education_level" = 'High school' THEN 'École secondaire' 
 		WHEN pa."Education_level" = 'College/University' THEN 'Collège/Université' 
 	ELSE NULL END AS niveau_education,
 	CASE 
@@ -321,15 +449,16 @@ SELECT
 		WHEN lndx.mnt IS NOT NULL AND lndx.tb IS NOT NULL AND lndx.vih IS NULL AND lndx.troubles_de_santé_mentale IS NULL THEN 'MNT + TB'
 		WHEN lndx.mnt IS NOT NULL AND lndx.tb IS NULL AND lndx.vih IS NULL AND lndx.troubles_de_santé_mentale IS NOT NULL THEN 'MNT + Santé mentale'
 		WHEN lndx.mnt IS NULL AND lndx.tb IS NOT NULL AND lndx.vih IS NULL AND lndx.troubles_de_santé_mentale IS NOT NULL THEN 'TB + Santé mentale'
-		WHEN lndx.mnt IS NULL AND lndx.tb IS NULL AND lndx.vih IS NOT NULL AND lndx.troubles_de_santé_mentale IS NOT NULL THEN 'VIH + Santé mentale'  
+		WHEN lndx.mnt IS NULL AND lndx.tb IS NULL AND lndx.vih IS NOT NULL AND lndx.troubles_de_santé_mentale IS NOT NULL THEN 'VIH + Santé mentale' 
 	ELSE NULL END AS cohorte,
-	lndx.asthme::date,
+	lndx.asthme,
 	lndx.drépanocytose,
 	lndx.insuffisance_renal_chronique,
 	lndx.syndrome_néphrotique,
 	lndx.maladie_cardiovasculaire,
 	lndx.bronchopneumopathie_chronique_obstructive,
 	lndx.diabète_type1,
+	CASE WHEN lndx.diabète_type1 IS NOT NULL THEN 'Oui' ELSE NULL END AS diabète_type1_filtre,
 	lndx.diabète_type2,
 	lndx.hypertension,
 	lndx.hypothyroïdie,
@@ -374,7 +503,27 @@ SELECT
 	CASE WHEN dpa.dernière_pression_artérielle_systolique IS NOT NULL AND dpa.dernière_pression_artérielle_diastolique IS NOT NULL THEN CONCAT(dpa.dernière_pression_artérielle_systolique,'/',dpa.dernière_pression_artérielle_diastolique) END AS dernière_pression_artérielle,
 	CASE WHEN dpa.dernière_pression_artérielle_systolique <= 140 AND dpa.dernière_pression_artérielle_diastolique <= 90 THEN 'Oui' WHEN dpa.dernière_pression_artérielle_systolique > 140 OR dpa.dernière_pression_artérielle_diastolique > 90 THEN 'Non' END AS dernière_tension_artérielle_controlée,
 	dimc.date_dernière_imc,
-	dimc.dernière_imc
+	dimc.dernière_imc,
+	dhba1c.date_dernière_hba1c,
+	dhba1c.dernière_hba1c,
+	CASE WHEN dhba1c.dernière_hba1c <= 6.5 THEN '0-6.5%' WHEN dhba1c.dernière_hba1c BETWEEN 6.6 AND 8 THEN '6.6-8.0%' WHEN dhba1c.dernière_hba1c > 8 THEN '>8%' END AS dernière_hba1c_seuil,
+	dgyl.date_dernière_glycémie,
+	dgyl.dernière_glycémie,
+	CASE WHEN dhba1c.dernière_hba1c < 8 THEN 'Oui' WHEN dhba1c.dernière_hba1c >= 8 THEN 'Non' WHEN dhba1c.dernière_hba1c IS NULL AND dgyl.dernière_glycémie < 150 THEN 'Oui' WHEN dhba1c.dernière_hba1c IS NULL AND dgyl.dernière_glycémie >= 150 THEN 'No' END AS diabète_contrôlé,
+	dpr.date_dernière_protéinurie,
+	dpr.dernière_protéinurie,
+	dcr.date_dernière_créatine,
+	dcr.dernière_créatine,
+	dv.enceinte_dernière_visite, 
+	dv.allaitante_dernière_visite, 
+	dv.hospitalisé_signalée_dernière_visite, 
+	dv.prise_de_médicaments_oubliée_signalée_dernière_visite, 
+	dv.convulsions_signalée_dernière_visite, 
+	dv.exacerbation_signalée_dernière_visite, 
+	dv.nbr_exacerbation_signalée_dernière_visite,
+	dga.dernière_gravité_asthme, 
+	hd6m.nb_hospitalisé_dernière_6m, 
+	hd6m.hospitalisé_dernière_6m
 FROM cohorte c
 LEFT OUTER JOIN patient_identifier pi
 	ON c.patient_id = pi.patient_id
@@ -410,5 +559,19 @@ LEFT OUTER JOIN dernière_charge_virale_vih dcv
 	ON c.encounter_id_inclusion = dcv.encounter_id_inclusion
 LEFT OUTER JOIN dernière_pression_artérielle dpa
 	ON c.encounter_id_inclusion = dpa.encounter_id_inclusion
-LEFT OUTER JOIN dernère_imc dimc
-	ON c.encounter_id_inclusion = dimc.encounter_id_inclusion;
+LEFT OUTER JOIN dernière_imc dimc
+	ON c.encounter_id_inclusion = dimc.encounter_id_inclusion
+LEFT OUTER JOIN dernière_hba1c dhba1c
+	ON c.encounter_id_inclusion = dhba1c.encounter_id_inclusion
+LEFT OUTER JOIN dernière_glycémie dgyl 
+	ON c.encounter_id_inclusion = dgyl.encounter_id_inclusion
+LEFT OUTER JOIN dernière_protéinurie dpr 
+	ON c.encounter_id_inclusion = dpr.encounter_id_inclusion
+LEFT OUTER JOIN dernière_créatine dcr 
+	ON c.encounter_id_inclusion = dcr.encounter_id_inclusion
+LEFT OUTER JOIN dernière_visite dv 
+	ON c.encounter_id_inclusion = dv.encounter_id_inclusion
+LEFT OUTER JOIN dernière_gravité_asthme dga 
+	ON c.encounter_id_inclusion = dga.encounter_id_inclusion
+LEFT OUTER JOIN hospitalisé_dernière_6m hd6m 
+	ON c.encounter_id_inclusion = hd6m.encounter_id_inclusion;
