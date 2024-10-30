@@ -1,35 +1,5 @@
--- CTE with registration information (ID, address and gender) (!! one patient is missing Patient ID 97 she has no MSF ID)
-WITH pi AS (
-    SELECT patient_id, "Patient_Identifier"
-    FROM patient_identifier),
-gender AS (
-    SELECT gender, person_id AS patient_id
-    FROM person_details_default),
-address AS (
-    SELECT person_id AS patient_id, city_village, state_province AS ta, county_district
-    FROM person_address_default),
-patient_attributes AS (
-    SELECT person_id AS patient_id, "MSF_ID", "PrEP_ID", "Nationality", "Literacy"
-    FROM person_attributes),
-registration AS (
-    SELECT 
-        pi.patient_id,
-        pa."MSF_ID",
-        pa."PrEP_ID",
-        pa."Nationality",
-        pa."Literacy",
-        a.city_village,
-        a.ta AS TA,
-        a.county_district,
-        g.gender,
-        pi."Patient_Identifier"
-    FROM pi 
-    LEFT OUTER JOIN gender g USING (patient_id)
-    LEFT OUTER JOIN address a USING (patient_id)
-    LEFT OUTER JOIN patient_attributes pa USING (patient_id)),
-
--- CTE for the information about the initial visit (date, location, HIV status and PrEP)    
-initial AS (
+-- CTE for the information about the initial visit (date, location, HIV status and PrEP)
+WITH initial AS (
     SELECT 
         DISTINCT ON (cf.patient_id) 
         cf.patient_id, 
@@ -112,12 +82,20 @@ last_pregnant AS (
         cf.pregnant 
     FROM "1_client_form" cf
     ORDER BY cf.patient_id, cf.date_of_visit DESC),
-last_sti AS (
+last_sti_ever_treated AS (
     SELECT 
         DISTINCT ON (cf.patient_id) 
         cf.patient_id,
-        cf.ever_treated_for_sti, 
-        cf.sti_screening
+        cf.ever_treated_for_sti AS last_ever_treated_for_sti, 
+        cf.date_of_visit AS date_last_sti_ever_treated
+    FROM "1_client_form" cf
+    ORDER BY cf.patient_id, cf.date_of_visit DESC),
+last_sti_screening AS (
+    SELECT 
+        DISTINCT ON (cf.patient_id) 
+        cf.patient_id,
+        cf.sti_screening AS last_sti_screening, 
+        cf.date_of_visit AS date_last_sti_screening
     FROM "1_client_form" cf
     ORDER BY cf.patient_id, cf.date_of_visit DESC),
 last_hiv_at_visit AS (
@@ -127,6 +105,7 @@ last_hiv_at_visit AS (
         cf.hiv_status_at_visit AS last_hiv_status_at_visit, 
         cf.hiv_testing_at_visit AS last_hiv_testing_at_visit 
     FROM "1_client_form" cf
+    WHERE cf.hiv_status_at_visit IS NOT NULL
     ORDER BY cf.patient_id, cf.date_of_visit DESC),
 last_arv_date AS (
     SELECT 
@@ -181,7 +160,7 @@ co AS (
         contraceptive_ongoing.contraceptive_ongoing
     FROM contraceptive_ongoing 
     LEFT JOIN "1_client_form" cf USING (patient_id)
-    ORDER BY contraceptive_ongoing.patient_id, contraceptive_ongoing.contraceptive_ongoing, cf.date_of_visit),
+    ORDER BY contraceptive_ongoing.patient_id, contraceptive_ongoing.contraceptive_ongoing, cf.date_of_visit DESC),
 
 co_pivot AS (
     SELECT 
@@ -215,7 +194,7 @@ contraceptive_provided AS (
         cpt.contraceptive_provided_today
     FROM contraceptive_provided_today cpt
     LEFT JOIN "1_client_form" cf USING (patient_id)
-    ORDER BY cpt.patient_id, cpt.contraceptive_provided_today, cf.date_of_visit),
+    ORDER BY cpt.patient_id, cpt.contraceptive_provided_today, cf.date_of_visit DESC),
 
 contraceptive_provided_pivot AS (
     SELECT 
@@ -297,26 +276,97 @@ last_lab_gfr AS (
     WHERE l.date_of_estimated_glomerular_filtration_rate IS NOT NULL OR l.estimated_glomerular_filtration_rate_result IS NOT NULL
     ORDER BY l.patient_id, l.date_of_estimated_glomerular_filtration_rate DESC)
 
-SELECT *
-FROM registration
-LEFT OUTER JOIN age USING (patient_id)
-LEFT OUTER JOIN initial USING (patient_id)
-LEFT OUTER JOIN follow_up USING (patient_id)
-LEFT OUTER JOIN last_pregnant USING (patient_id)
-LEFT OUTER JOIN last_sti USING (patient_id)
-LEFT OUTER JOIN last_hiv_at_visit USING (patient_id)
-LEFT OUTER JOIN last_arv_date USING (patient_id)
-LEFT OUTER JOIN last_hpv_screening USING (patient_id)
-LEFT OUTER JOIN last_hpv_treated USING (patient_id)
-LEFT OUTER JOIN last_contra USING (patient_id)
-LEFT OUTER JOIN last_appointment USING (patient_id)
-LEFT OUTER JOIN last_use_of_routine_data USING (patient_id)
-LEFT OUTER JOIN co_table USING (patient_id)
-LEFT OUTER JOIN contraceptive_provided_table USING (patient_id)
-LEFT OUTER JOIN last_lab_hiv_result USING (patient_id)
-LEFT OUTER JOIN last_lab_syphilis USING (patient_id)
-LEFT OUTER JOIN last_lab_hep_b USING (patient_id)
-LEFT OUTER JOIN last_lab_pregnancy USING (patient_id)
-LEFT OUTER JOIN last_lab_hpv USING (patient_id)
-LEFT OUTER JOIN last_lab_creat USING (patient_id)
-LEFT OUTER JOIN last_lab_gfr USING (patient_id);
+SELECT 
+    pi.patient_id, 
+    "Patient_Identifier",
+    pdd.gender,
+       "MSF_ID", 
+    "PrEP_ID", 
+    pad.city_village, 
+    pad.state_province AS TA, 
+    pad.county_district,
+    "Nationality", 
+    "Literacy",
+    i.date_of_initial_visit, 
+    i.initial_visit_location, 
+    i.initial_hiv_status_at_visit, 
+    i.initial_hiv_testing_at_visit, 
+    i.initial_prep_treatment,
+    a.age_inclusion, 
+    a.groupe_age_inclusion, 
+    a.age_current, 
+    a.groupe_age_current,
+    fu.date_of_last_visit, 
+    fu.last_visit_location,
+    lp.date_last_pregnant_information, 
+    lp.pregnant,
+    lset.date_last_sti_ever_treated, 
+    lset.last_ever_treated_for_sti,
+    lss.date_last_sti_screening, 
+    lss.last_sti_screening,
+    lhav.last_hiv_status_at_visit, 
+    lhav.last_hiv_testing_at_visit,
+    lad.last_arv_start_date,
+    lhs.date_last_HPV_screening, 
+    lhs.hpv_screening,
+    lht.treated_by_thermal_coagulation,
+    lc.status_of_contraceptive_service,
+    la.next_appointment_to_be_scheduled,
+    lurd.use_of_pseudonymized_routine_data_for_the_prep_implementati,
+    cot.date_contraceptive_ongoing, 
+    cot.contraceptive_ongoing, 
+    cot.Injectable_ongoing, 
+    cot.Implant_ongoing, 
+    cot.Oral_contraceptive_pill_ongoing, 
+    cot.Condom_ongoing, 
+    cot.Emergency_contraceptive_pill_ongoing, 
+    cot.IUCD_ongoing, 
+    cot.list_contraceptive_ongoing,
+    cpt.date_contraceptive_provided, 
+    cpt.contraceptive_provided_today, 
+    cpt.Injectable_provided, 
+    cpt.Implant_provided, 
+    cpt.Oral_contraceptive_pill_provided, 
+    cpt.Condom_provided, 
+    cpt.Emergency_contraceptive_pill_provided, 
+    cpt.IUCD_provided, 
+    cpt.list_contraceptive_provided,
+    llhr.date_of_rapid_hiv_test, 
+    llhr.rapid_hiv_test_result,
+    llsy.date_of_syphilis_test, 
+    llsy.syphilis_test_result,
+    llhb.date_of_hepatitis_b_test, 
+    llhb.hepatitis_b_test_result,
+    llpt.date_of_pregnancy_test, 
+    llpt.pregnancy_test_result,
+    llhpv.date_of_sample_collection_for_hpv_test,
+    llc.date_of_creatinine_concentration, 
+    llc.creatinine_concentration_result,      
+    llg.date_of_estimated_glomerular_filtration_rate, 
+    llg.estimated_glomerular_filtration_rate_result        
+FROM patient_identifier pi
+LEFT OUTER JOIN person_details_default pdd ON pi.patient_id = pdd.person_id
+LEFT OUTER JOIN person_address_default pad ON pi.patient_id = pad.person_id
+LEFT OUTER JOIN person_attributes pa ON pi.patient_id = pa.person_id
+LEFT OUTER JOIN initial i ON pi.patient_id = i.patient_id
+LEFT OUTER JOIN age a ON pi.patient_id = a.patient_id
+LEFT OUTER JOIN follow_up fu ON pi.patient_id = fu.patient_id
+LEFT OUTER JOIN last_pregnant lp ON pi.patient_id = lp.patient_id
+LEFT OUTER JOIN last_sti_ever_treated lset ON pi.patient_id = lset.patient_id
+LEFT OUTER JOIN last_sti_screening lss ON pi.patient_id = lss.patient_id
+LEFT OUTER JOIN last_hiv_at_visit lhav ON pi.patient_id = lhav.patient_id
+LEFT OUTER JOIN last_arv_date lad ON pi.patient_id = lad.patient_id
+LEFT OUTER JOIN last_hpv_screening lhs ON pi.patient_id = lhs.patient_id
+LEFT OUTER JOIN last_hpv_treated lht ON pi.patient_id = lht.patient_id
+LEFT OUTER JOIN last_contra lc ON pi.patient_id = lc.patient_id
+LEFT OUTER JOIN last_appointment la ON pi.patient_id = la.patient_id
+LEFT OUTER JOIN last_use_of_routine_data lurd ON pi.patient_id = lurd.patient_id
+LEFT OUTER JOIN co_table cot ON pi.patient_id = cot.patient_id
+LEFT OUTER JOIN contraceptive_provided_table cpt ON pi.patient_id = cpt.patient_id
+LEFT OUTER JOIN last_lab_hiv_result llhr ON pi.patient_id = llhr.patient_id
+LEFT OUTER JOIN last_lab_syphilis llsy ON pi.patient_id = llsy.patient_id
+LEFT OUTER JOIN last_lab_hep_b llhb ON pi.patient_id = llhb.patient_id
+LEFT OUTER JOIN last_lab_pregnancy llpt ON pi.patient_id = llpt.patient_id
+LEFT OUTER JOIN last_lab_hpv llhpv ON pi.patient_id = llhpv.patient_id
+LEFT OUTER JOIN last_lab_creat llc ON pi.patient_id = llc.patient_id
+LEFT OUTER JOIN last_lab_gfr llg ON pi.patient_id = llg.patient_id;
