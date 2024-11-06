@@ -9,6 +9,7 @@ WITH initial AS (
         cf.hiv_testing_at_visit AS initial_hiv_testing_at_visit, 
         cf.prep_treatment AS initial_prep_treatment
     FROM "1_client_form" cf
+    WHERE cf.visit_type = 'Initial visit'
     ORDER BY cf.patient_id, cf.date_of_visit),
     
 -- CTE for age group for current age and inclusion age  
