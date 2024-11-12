@@ -9,14 +9,29 @@ cohorte AS (
 	FROM inclusion i
 	LEFT JOIN (SELECT patient_id, date, encounter_id, date_de_sortie, statut_de_sortie FROM mnt_vih_tb WHERE type_de_visite = 'Sortie') d 
 		ON i.patient_id = d.patient_id AND d.date >= i.date_inclusion AND (d.date < i.date_inclusion_suivi OR i.date_inclusion_suivi IS NULL)),
--- The diagnosis CTE selects all reported diagnoses per cohort enrollment, both listing and pivoting the data horizonally. The pivoted diagnosis data is presented with the date the diagnosis was first reported.
+-- The diagnosis CTEs select the last reported diagnosis per cohort enrollment, both listing and pivoting the data horizonally. The pivoted diagnosis data is presented with the date the diagnosis was first reported.
+diagnostic_cohorte_dates AS (
+    SELECT 
+        d.patient_id, c.encounter_id_inclusion, d.diagnostic, MIN(n.date) AS first_date, MAX(n.date) AS last_date
+    FROM diagnostic d
+    LEFT JOIN mnt_vih_tb n USING(encounter_id)
+    LEFT JOIN cohorte c 
+        ON d.patient_id = c.patient_id AND c.date_inclusion <= n.date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date
+    GROUP BY d.patient_id, c.encounter_id_inclusion, d.diagnostic),
+dernière_diagnostic_cohorte AS (
+    SELECT 
+        patient_id,
+		encounter_id_inclusion,
+        MAX(last_date) AS most_recent_date
+    FROM diagnostic_cohorte_dates
+    GROUP BY patient_id, encounter_id_inclusion),
 diagnostic_cohorte AS (
-	SELECT
-		DISTINCT ON (d.patient_id, d.diagnostic) d.patient_id, c.encounter_id_inclusion, n.date, d.diagnostic
-	FROM diagnostic d 
-	LEFT JOIN mnt_vih_tb n USING(encounter_id)
-	LEFT JOIN cohorte c ON d.patient_id = c.patient_id AND c.date_inclusion <= n.date AND CASE WHEN c.date_de_sortie IS NOT NULL THEN c.date_de_sortie ELSE current_date END >= n.date
-	ORDER BY d.patient_id, d.diagnostic, n.date),
+	SELECT 
+    	dcd.patient_id, dcd.encounter_id_inclusion, dcd.diagnostic, dcd.first_date, dcd.last_date
+	FROM diagnostic_cohorte_dates dcd
+	INNER JOIN dernière_diagnostic_cohorte ddc
+    	ON dcd.encounter_id_inclusion = ddc.encounter_id_inclusion AND dcd.last_date = ddc.most_recent_date 
+	ORDER BY dcd.encounter_id_inclusion, dcd.diagnostic),
 -- The last visit location CTE finds the last visit location reported in clinical forms (including MNT VIH TB, PTPE).
 dernière_fiche_location AS (	
 	SELECT 

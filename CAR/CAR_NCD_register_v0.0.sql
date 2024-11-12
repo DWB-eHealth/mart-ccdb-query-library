@@ -46,39 +46,54 @@ dernière_fiche_location AS (
 	WHERE forms.lieu_de_visite IS NOT NULL
 	GROUP BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, forms.date, forms.lieu_de_visite
 	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, forms.date DESC),
--- The diagnosis CTE selects all reported diagnoses per cohort enrollment, both listing and pivoting the data horizonally. The pivoted diagnosis data is presented with the date the diagnosis was first reported.
+-- The diagnosis CTEs select the last reported diagnosis per cohort enrollment, both listing and pivoting the data horizonally. The pivoted diagnosis data is presented with the date the diagnosis was first reported.
+diagnostic_cohorte_dates AS (
+    SELECT 
+        d.patient_id, c.encounter_id_inclusion, d.diagnostic, MIN(n.date) AS first_date, MAX(n.date) AS last_date
+    FROM diagnostic d
+    LEFT JOIN mnt_vih_tb n USING(encounter_id)
+    LEFT JOIN cohorte c 
+        ON d.patient_id = c.patient_id AND c.date_inclusion <= n.date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date
+    GROUP BY d.patient_id, c.encounter_id_inclusion, d.diagnostic),
+dernière_diagnostic_cohorte AS (
+    SELECT 
+        patient_id,
+		encounter_id_inclusion,
+        MAX(last_date) AS most_recent_date
+    FROM diagnostic_cohorte_dates
+    GROUP BY patient_id, encounter_id_inclusion),
 diagnostic_cohorte AS (
-	SELECT
-		DISTINCT ON (d.patient_id, d.diagnostic) d.patient_id, c.encounter_id_inclusion, n.date, d.diagnostic
-	FROM diagnostic d 
-	LEFT JOIN mnt_vih_tb n USING(encounter_id)
-	LEFT JOIN cohorte c ON d.patient_id = c.patient_id AND c.date_inclusion <= n.date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date
-	ORDER BY d.patient_id, d.diagnostic, n.date),
+	SELECT 
+    	dcd.patient_id, dcd.encounter_id_inclusion, dcd.diagnostic, dcd.first_date, dcd.last_date
+	FROM diagnostic_cohorte_dates dcd
+	INNER JOIN dernière_diagnostic_cohorte ddc
+    	ON dcd.encounter_id_inclusion = ddc.encounter_id_inclusion AND dcd.last_date = ddc.most_recent_date 
+	ORDER BY dcd.encounter_id_inclusion, dcd.diagnostic),
 diagnostic_cohorte_pivot AS (
 	SELECT 
 		DISTINCT ON (encounter_id_inclusion, patient_id) encounter_id_inclusion, 
 		patient_id,
-		MAX (CASE WHEN diagnostic = 'Asthme' THEN date::date ELSE NULL END) AS asthme,
-		MAX (CASE WHEN diagnostic = 'Drépanocytose' THEN date::date ELSE NULL END) AS drépanocytose,
-		MAX (CASE WHEN diagnostic = 'Insuffisance renale chronique' THEN date::date ELSE NULL END) AS insuffisance_renal_chronique,
-		MAX (CASE WHEN diagnostic = 'Syndrome néphrotique' THEN date::date ELSE NULL END) AS syndrome_néphrotique,
-		MAX (CASE WHEN diagnostic = 'Maladie cardiovasculaire' THEN date::date ELSE NULL END) AS maladie_cardiovasculaire,
-		MAX (CASE WHEN diagnostic = 'Bronchopneumopathie chronique obstructive' THEN date::date ELSE NULL END) AS bronchopneumopathie_chronique_obstructive,
-		MAX (CASE WHEN diagnostic = 'Diabète sucré de type 1' THEN date::date ELSE NULL END) AS diabète_type1,
-		MAX (CASE WHEN diagnostic = 'Diabète sucré de type 2' THEN date::date ELSE NULL END) AS diabète_type2,
-		MAX (CASE WHEN diagnostic = 'Hypertension' THEN date::date ELSE NULL END) AS hypertension,
-		MAX (CASE WHEN diagnostic = 'Hypothyroïdie' THEN date::date ELSE NULL END) AS hypothyroïdie,
-		MAX (CASE WHEN diagnostic = 'Hyperthyroïdie' THEN date::date ELSE NULL END) AS hyperthyroïdie,
-		MAX (CASE WHEN diagnostic = 'Épilepsie focale' THEN date::date ELSE NULL END) AS épilepsie_focale,
-		MAX (CASE WHEN diagnostic = 'Épilepsie généralisée' THEN date::date ELSE NULL END) AS épilepsie_généralisée,
-		MAX (CASE WHEN diagnostic = 'Épilepsie non classifiée' THEN date::date ELSE NULL END) AS épilepsie_non_classifiée,
-		MAX (CASE WHEN diagnostic = 'Tuberculose pulmonaire' THEN date::date ELSE NULL END) AS tb_pulmonaire,
-		MAX (CASE WHEN diagnostic = 'Tuberculose extrapulmonaire' THEN date::date ELSE NULL END) AS tb_extrapulmonaire,
-		MAX (CASE WHEN diagnostic = 'Infection par le VIH' THEN date::date ELSE NULL END) AS vih,
-		MAX (CASE WHEN diagnostic LIKE '%hépatite B' THEN date::date ELSE NULL END) AS infection_hep_b,
-		MAX (CASE WHEN diagnostic LIKE '%hépatite C' THEN date::date ELSE NULL END) AS infection_hep_c,
-		MAX (CASE WHEN diagnostic = 'Troubles de santé mentale' THEN date::date ELSE NULL END) AS troubles_de_santé_mentale,
-		MAX (CASE WHEN diagnostic = 'Autre' THEN date::date ELSE NULL END) AS autre_diagnostic,
+		MAX (CASE WHEN diagnostic = 'Asthme' THEN first_date::date ELSE NULL END) AS asthme,
+		MAX (CASE WHEN diagnostic = 'Drépanocytose' THEN first_date::date ELSE NULL END) AS drépanocytose,
+		MAX (CASE WHEN diagnostic = 'Insuffisance renale chronique' THEN first_date::date ELSE NULL END) AS insuffisance_renal_chronique,
+		MAX (CASE WHEN diagnostic = 'Syndrome néphrotique' THEN first_date::date ELSE NULL END) AS syndrome_néphrotique,
+		MAX (CASE WHEN diagnostic = 'Maladie cardiovasculaire' THEN first_date::date ELSE NULL END) AS maladie_cardiovasculaire,
+		MAX (CASE WHEN diagnostic = 'Bronchopneumopathie chronique obstructive' THEN first_date::date ELSE NULL END) AS bronchopneumopathie_chronique_obstructive,
+		MAX (CASE WHEN diagnostic = 'Diabète sucré de type 1' THEN first_date::date ELSE NULL END) AS diabète_type1,
+		MAX (CASE WHEN diagnostic = 'Diabète sucré de type 2' THEN first_date::date ELSE NULL END) AS diabète_type2,
+		MAX (CASE WHEN diagnostic = 'Hypertension' THEN first_date::date ELSE NULL END) AS hypertension,
+		MAX (CASE WHEN diagnostic = 'Hypothyroïdie' THEN first_date::date ELSE NULL END) AS hypothyroïdie,
+		MAX (CASE WHEN diagnostic = 'Hyperthyroïdie' THEN first_date::date ELSE NULL END) AS hyperthyroïdie,
+		MAX (CASE WHEN diagnostic = 'Épilepsie focale' THEN first_date::date ELSE NULL END) AS épilepsie_focale,
+		MAX (CASE WHEN diagnostic = 'Épilepsie généralisée' THEN first_date::date ELSE NULL END) AS épilepsie_généralisée,
+		MAX (CASE WHEN diagnostic = 'Épilepsie non classifiée' THEN first_date::date ELSE NULL END) AS épilepsie_non_classifiée,
+		MAX (CASE WHEN diagnostic = 'Tuberculose pulmonaire' THEN first_date::date ELSE NULL END) AS tb_pulmonaire,
+		MAX (CASE WHEN diagnostic = 'Tuberculose extrapulmonaire' THEN first_date::date ELSE NULL END) AS tb_extrapulmonaire,
+		MAX (CASE WHEN diagnostic = 'Infection par le VIH' THEN first_date::date ELSE NULL END) AS vih,
+		MAX (CASE WHEN diagnostic LIKE '%hépatite B' THEN first_date::date ELSE NULL END) AS infection_hep_b,
+		MAX (CASE WHEN diagnostic LIKE '%hépatite C' THEN first_date::date ELSE NULL END) AS infection_hep_c,
+		MAX (CASE WHEN diagnostic = 'Troubles de santé mentale' THEN first_date::date ELSE NULL END) AS troubles_de_santé_mentale,
+		MAX (CASE WHEN diagnostic = 'Autre' THEN first_date::date ELSE NULL END) AS autre_diagnostic,
 		MAX (CASE WHEN diagnostic IN ('Asthme','Drépanocytose','Insuffisance renale chronique','Syndrome néphrotique','Maladie cardiovasculaire','Bronchopneumopathie chronique obstructive','Diabète sucré de type 1','Diabète sucré de type 2','Hypertension','Hypothyroïdie','Hyperthyroïdie','Épilepsie focale','Épilepsie généralisée','Épilepsie non classifiée','Autre') THEN 'Oui' ELSE NULL END) AS mnt,
 		MAX (CASE WHEN diagnostic IN ('Tuberculose pulmonaire','Tuberculose extrapulmonaire') THEN 'Oui' ELSE NULL END) AS tb		
 	FROM diagnostic_cohorte
