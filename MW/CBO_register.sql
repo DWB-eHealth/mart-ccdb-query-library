@@ -68,88 +68,55 @@ follow_up AS (
     SELECT 
         DISTINCT ON (cf.patient_id) 
         cf.patient_id, 
-        cf.date_of_visit AS date_of_last_visit, 
-        cf.visit_location AS last_visit_location 
+        cf.date_of_visit AS last_fu_visit_date, 
+        cf.visit_location AS last_fu_visit_location 
     FROM "1_client_form" cf
     WHERE visit_type = 'Follow-up visit'
     ORDER BY cf.patient_id, cf.date_of_visit DESC),
 
--- CTE with last visit information (missing diagnosis list and contraceptive list)
-last_pregnant AS (
+-- CTE with last visit information - mandatory question (missing diagnosis list and contraceptive list)
+last_mandatory_visit_information AS (
     SELECT 
         DISTINCT ON (cf.patient_id) 
         cf.patient_id,
-        cf.date_of_visit AS date_last_pregnant_information, 
-        cf.pregnant 
+        cf.date_of_visit AS date_of_last_visit, 
+        cf.pregnant AS last_pregnant_status,
+        cf.ever_treated_for_sti AS last_ever_treated_for_sti,
+        cf.sti_screening AS last_sti_screening,
+        cf.hiv_status_at_visit AS last_hiv_status_at_visit,
+        cf.hiv_testing_at_visit AS last_hiv_testing_at_visit,
+        cf.hpv_screening,
+        cf.status_of_contraceptive_service
     FROM "1_client_form" cf
     ORDER BY cf.patient_id, cf.date_of_visit DESC),
-last_sti_ever_treated AS (
-    SELECT 
-        DISTINCT ON (cf.patient_id) 
-        cf.patient_id,
-        cf.ever_treated_for_sti AS last_ever_treated_for_sti, 
-        cf.date_of_visit AS date_last_sti_ever_treated
-    FROM "1_client_form" cf
-    ORDER BY cf.patient_id, cf.date_of_visit DESC),
-last_sti_screening AS (
-    SELECT 
-        DISTINCT ON (cf.patient_id) 
-        cf.patient_id,
-        cf.sti_screening AS last_sti_screening, 
-        cf.date_of_visit AS date_last_sti_screening
-    FROM "1_client_form" cf
-    ORDER BY cf.patient_id, cf.date_of_visit DESC),
-last_hiv_at_visit AS (
-    SELECT 
-        DISTINCT ON (cf.patient_id) 
-        cf.patient_id, 
-        cf.hiv_status_at_visit AS last_hiv_status_at_visit, 
-        cf.hiv_testing_at_visit AS last_hiv_testing_at_visit 
-    FROM "1_client_form" cf
-    WHERE cf.hiv_status_at_visit IS NOT NULL
-    ORDER BY cf.patient_id, cf.date_of_visit DESC),
-last_arv_date AS (
-    SELECT 
-        DISTINCT ON (cf.patient_id) 
-        cf.patient_id, 
-        cf.arv_start_date AS last_arv_start_date
-    FROM "1_client_form" cf
-    ORDER BY cf.patient_id, cf.date_of_visit DESC),
-last_hpv_screening AS (
-    SELECT 
-        DISTINCT ON (cf.patient_id) 
-        cf.patient_id,
-        cf.date_of_visit AS date_last_HPV_screening,
-        cf.hpv_screening
-    FROM "1_client_form" cf
-    ORDER BY cf.patient_id, cf.date_of_visit DESC),
+
+-- CTE with last visit information - NOT mandatory question (missing diagnosis list and contraceptive list)
 last_hpv_treated AS (
     SELECT 
         DISTINCT ON (cf.patient_id) 
         cf.patient_id,
+        cf.date_of_visit AS last_date_treated_by_thermal_coagulation,
         cf.treated_by_thermal_coagulation
     FROM "1_client_form" cf
+    WHERE cf.treated_by_thermal_coagulation IS NOT NULL
     ORDER BY cf.patient_id, cf.date_of_visit DESC),
-last_contra AS (
-    SELECT 
-        DISTINCT ON (cf.patient_id) 
-        cf.patient_id, 
-        cf.status_of_contraceptive_service
-    FROM "1_client_form" cf
-    ORDER BY cf.patient_id, cf.date_of_visit DESC),
+    
 last_appointment AS (
     SELECT 
         DISTINCT ON (cf.patient_id) 
         cf.patient_id,
         cf.next_appointment_to_be_scheduled
     FROM "1_client_form" cf
+    WHERE next_appointment_to_be_scheduled IS NOT NULL
     ORDER BY cf.patient_id, cf.date_of_visit DESC),
+
 last_use_of_routine_data AS (
     SELECT 
         DISTINCT ON (cf.patient_id) 
         cf.patient_id,
         cf.use_of_pseudonymized_routine_data_for_the_prep_implementati
     FROM "1_client_form" cf
+    WHERE use_of_pseudonymized_routine_data_for_the_prep_implementati IS NOT NULL
     ORDER BY cf.patient_id, cf.date_of_visit DESC),
 
 -- CTE for contraceptive on going (multiselect)
@@ -181,7 +148,7 @@ co_list AS (
 	GROUP BY encounter_id),
 
 co_table AS (
-SELECT co.patient_id, co.encounter_id, co.date_contraceptive_ongoing, co.contraceptive_ongoing, cop.Injectable_ongoing, cop.Implant_ongoing, cop.Oral_contraceptive_pill_ongoing, cop.Condom_ongoing, cop.Emergency_contraceptive_pill_ongoing, cop.IUCD_ongoing, col.list_contraceptive_ongoing
+SELECT co.patient_id, co.encounter_id, co.date_contraceptive_ongoing, cop.Injectable_ongoing, cop.Implant_ongoing, cop.Oral_contraceptive_pill_ongoing, cop.Condom_ongoing, cop.Emergency_contraceptive_pill_ongoing, cop.IUCD_ongoing, col.list_contraceptive_ongoing
 FROM co
 LEFT JOIN co_pivot cop ON co.patient_id = cop.patient_id AND co.encounter_id = cop.encounter_id
 LEFT JOIN co_list col ON co.encounter_id = col.encounter_id),
@@ -215,7 +182,7 @@ contraceptive_provided_list AS (
 	GROUP BY encounter_id),
 
 contraceptive_provided_table AS (
-SELECT cp.patient_id, cp.encounter_id, cp.date_contraceptive_provided, cp.contraceptive_provided_today, cpp.Injectable_provided, cpp.Implant_provided, cpp.Oral_contraceptive_pill_provided, cpp.Condom_provided, cpp.Emergency_contraceptive_pill_provided, cpp.IUCD_provided, cpl.list_contraceptive_provided
+SELECT cp.patient_id, cp.encounter_id, cp.date_contraceptive_provided, cpp.Injectable_provided, cpp.Implant_provided, cpp.Oral_contraceptive_pill_provided, cpp.Condom_provided, cpp.Emergency_contraceptive_pill_provided, cpp.IUCD_provided, cpl.list_contraceptive_provided
 FROM contraceptive_provided cp
 LEFT JOIN contraceptive_provided_pivot cpp ON cp.patient_id = cpp.patient_id AND cp.encounter_id = cpp.encounter_id
 LEFT JOIN contraceptive_provided_list cpl ON cp.encounter_id = cpl.encounter_id),
@@ -297,25 +264,21 @@ SELECT
     a.groupe_age_inclusion, 
     a.age_current, 
     a.groupe_age_current,
-    fu.date_of_last_visit, 
-    fu.last_visit_location,
-    lp.date_last_pregnant_information, 
-    lp.pregnant,
-    lset.date_last_sti_ever_treated, 
-    lset.last_ever_treated_for_sti,
-    lss.date_last_sti_screening, 
-    lss.last_sti_screening,
-    lhav.last_hiv_status_at_visit, 
-    lhav.last_hiv_testing_at_visit,
-    lad.last_arv_start_date,
-    lhs.date_last_HPV_screening, 
-    lhs.hpv_screening,
+    fu.last_fu_visit_date,
+    fu.last_fu_visit_location,
+    lmvi.date_of_last_visit, 
+    lmvi.last_pregnant_status,
+    lmvi.last_ever_treated_for_sti, 
+    lmvi.last_sti_screening,
+    lmvi.last_hiv_status_at_visit, 
+    lmvi.last_hiv_testing_at_visit,
+    lmvi.hpv_screening, 
+    lmvi.status_of_contraceptive_service,
+    lht.last_date_treated_by_thermal_coagulation,
     lht.treated_by_thermal_coagulation,
-    lc.status_of_contraceptive_service,
     la.next_appointment_to_be_scheduled,
     lurd.use_of_pseudonymized_routine_data_for_the_prep_implementati,
     cot.date_contraceptive_ongoing, 
-    cot.contraceptive_ongoing, 
     cot.Injectable_ongoing, 
     cot.Implant_ongoing, 
     cot.Oral_contraceptive_pill_ongoing, 
@@ -323,8 +286,7 @@ SELECT
     cot.Emergency_contraceptive_pill_ongoing, 
     cot.IUCD_ongoing, 
     cot.list_contraceptive_ongoing,
-    cpt.date_contraceptive_provided, 
-    cpt.contraceptive_provided_today, 
+    cpt.date_contraceptive_provided,  
     cpt.Injectable_provided, 
     cpt.Implant_provided, 
     cpt.Oral_contraceptive_pill_provided, 
@@ -352,14 +314,8 @@ LEFT OUTER JOIN person_attributes pa ON pi.patient_id = pa.person_id
 LEFT OUTER JOIN initial i ON pi.patient_id = i.patient_id
 LEFT OUTER JOIN age a ON pi.patient_id = a.patient_id
 LEFT OUTER JOIN follow_up fu ON pi.patient_id = fu.patient_id
-LEFT OUTER JOIN last_pregnant lp ON pi.patient_id = lp.patient_id
-LEFT OUTER JOIN last_sti_ever_treated lset ON pi.patient_id = lset.patient_id
-LEFT OUTER JOIN last_sti_screening lss ON pi.patient_id = lss.patient_id
-LEFT OUTER JOIN last_hiv_at_visit lhav ON pi.patient_id = lhav.patient_id
-LEFT OUTER JOIN last_arv_date lad ON pi.patient_id = lad.patient_id
-LEFT OUTER JOIN last_hpv_screening lhs ON pi.patient_id = lhs.patient_id
+LEFT OUTER JOIN last_mandatory_visit_information lmvi ON pi.patient_id = lmvi.patient_id
 LEFT OUTER JOIN last_hpv_treated lht ON pi.patient_id = lht.patient_id
-LEFT OUTER JOIN last_contra lc ON pi.patient_id = lc.patient_id
 LEFT OUTER JOIN last_appointment la ON pi.patient_id = la.patient_id
 LEFT OUTER JOIN last_use_of_routine_data lurd ON pi.patient_id = lurd.patient_id
 LEFT OUTER JOIN co_table cot ON pi.patient_id = cot.patient_id
