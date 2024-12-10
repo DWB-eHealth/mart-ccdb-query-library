@@ -5,75 +5,98 @@ WITH initial AS (
 	FROM ncd WHERE visit_type = 'Initial visit'),
 cohort AS (
 	SELECT
-		i.patient_id, i.initial_encounter_id, i.initial_visit_location, i.initial_visit_date, CASE WHEN i.initial_visit_order > 1 THEN 'Yes' END readmission, d.encounter_id AS discharge_encounter_id, d.discharge_date, d.patient_outcome AS patient_outcome
+		i.patient_id, i.initial_encounter_id, i.initial_visit_location, i.initial_visit_date, CASE WHEN i.initial_visit_order > 1 THEN 'Yes' END readmission, d.encounter_id AS discharge_encounter_id, d.discharge_date2 AS discharge_date, d.patient_outcome
 	FROM initial i
-	LEFT JOIN (SELECT patient_id, encounter_id, COALESCE(discharge_date::date, date::date) AS discharge_date, patient_outcome FROM ncd WHERE visit_type = 'Discharge visit') d 
-		ON i.patient_id = d.patient_id AND d.discharge_date >= i.initial_visit_date AND (d.discharge_date < i.next_initial_visit_date OR i.next_initial_visit_date IS NULL)),
+	LEFT JOIN (SELECT patient_id, encounter_id, COALESCE(discharge_date::date, date::date) AS discharge_date2, patient_outcome FROM ncd WHERE visit_type = 'Discharge visit') d 
+		ON i.patient_id = d.patient_id AND (d.discharge_date2 IS NULL OR (d.discharge_date2 >= i.initial_visit_date AND (d.discharge_date2 < i.next_initial_visit_date OR i.next_initial_visit_date IS NULL)))),
 -- The last completed and missed appointment CTEs determine if a patient currently enrolled in the cohort has not attended their appointments.  
 last_completed_appointment AS (
-	SELECT patient_id, appointment_start_time, appointment_service, appointment_location
+	SELECT patient_id, initial_encounter_id, appointment_start_time::date, appointment_service, appointment_location
 	FROM (
 		SELECT
-			patient_id,
-			appointment_start_time,
-			appointment_service,
-			appointment_location,
-			ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY appointment_start_time DESC) AS rn
-		FROM patient_appointment_default
-		WHERE appointment_start_time < now() AND (appointment_status = 'Completed' OR appointment_status = 'CheckedIn')) foo
-	WHERE rn = 1),
+			pad.patient_id,
+			c.initial_encounter_id,
+			pad.appointment_start_time,
+			pad.appointment_service,
+			pad.appointment_location,
+			ROW_NUMBER() OVER (PARTITION BY pad.patient_id ORDER BY pad.appointment_start_time DESC) AS rn
+		FROM patient_appointment_default pad
+		LEFT OUTER JOIN cohort c
+			ON pad.patient_id = c.patient_id AND c.initial_visit_date <= pad.appointment_start_time::date AND COALESCE(c.discharge_date, CURRENT_DATE) >= pad.appointment_start_time::date
+		WHERE pad.appointment_start_time < now() AND (pad.appointment_status = 'Completed' OR pad.appointment_status = 'CheckedIn')) foo
+	WHERE rn = 1 AND initial_encounter_id IS NOT NULL),
 first_missed_appointment AS (
-	SELECT patient_id, appointment_start_time, appointment_service
+	SELECT patient_id, initial_encounter_id, appointment_start_time::date, appointment_service,rn
 	FROM (
 		SELECT
 			pa.patient_id,
+			c.initial_encounter_id,
 			pa.appointment_start_time,
 			pa.appointment_service,
 			ROW_NUMBER() OVER (PARTITION BY pa.patient_id ORDER BY pa.appointment_start_time) AS rn
 		FROM last_completed_appointment lca
 		RIGHT JOIN patient_appointment_default pa
 			ON lca.patient_id = pa.patient_id 
+		LEFT OUTER JOIN cohort c
+			ON pa.patient_id = c.patient_id AND c.initial_visit_date <= pa.appointment_start_time::date AND COALESCE(c.discharge_date, CURRENT_DATE) >= pa.appointment_start_time::date 
 		WHERE pa.appointment_start_time > lca.appointment_start_time AND pa.appointment_status = 'Missed') foo
-	WHERE rn = 1),
+	WHERE rn = 1 AND initial_encounter_id IS NOT NULL),
 last_form AS (
-	SELECT initial_encounter_id, last_form_date, last_form_type 
+	SELECT patient_id, initial_encounter_id, last_form_date, last_form_type
 	FROM (
 		SELECT 
 			c.patient_id,
 			c.initial_encounter_id,
 			nvsl.date AS last_form_date,
 			nvsl.last_form_type AS last_form_type,
-			ROW_NUMBER() OVER (PARTITION BY nvsl.patient_id ORDER BY nvsl.date DESC) AS rn
-		FROM cohort c
-		LEFT OUTER JOIN (
-			SELECT 
+			ROW_NUMBER() OVER (PARTITION BY c.initial_encounter_id ORDER BY nvsl.date DESC, nvsl.last_form_type) AS rn
+		FROM (
+		    SELECT 
 				patient_id, COALESCE(discharge_date, date) AS date, visit_type AS last_form_type 
 			FROM ncd 
 			UNION 
-			SELECT patient_id, date, form_field_path AS last_form_type
-			FROM vitals_and_laboratory_information) nvsl
-			ON c.patient_id = nvsl.patient_id AND c.initial_visit_date <= nvsl.date::date AND c.discharge_date >= nvsl.date::date) foo
-	WHERE rn = 1),
+			SELECT patient_id, COALESCE(date, date_of_sample_collection) date, form_field_path AS last_form_type
+			FROM vitals_and_laboratory_information
+			ORDER BY last_form_type) nvsl
+		LEFT OUTER JOIN cohort c
+		    ON nvsl.patient_id = c.patient_id AND c.initial_visit_date <= nvsl.date AND COALESCE(c.discharge_date, CURRENT_DATE) >= nvsl.date) foo
+    WHERE rn = 1 AND initial_encounter_id IS NOT NULL),
 last_visit AS (
 	SELECT
-		lca.patient_id,
+		c.patient_id,
 		c.initial_encounter_id,
-		lca.appointment_start_time::date AS last_appointment_date,
+		c.initial_visit_date,
+		c.discharge_date,
+		c.patient_outcome,
+		c.discharge_encounter_id,
+		lca.appointment_start_time AS last_appointment_date,
 		lca.appointment_service AS last_appointment_service,
 		lca.appointment_location AS last_appointment_location,
 		lf.last_form_date,
 		lf.last_form_type,
-		CASE WHEN lca.appointment_start_time >= lf.last_form_date THEN lca.appointment_start_time::date WHEN lca.appointment_start_time < lf.last_form_date THEN lf.last_form_date::date WHEN lca.appointment_start_time IS NOT NULL AND lf.last_form_date IS NULL THEN lca.appointment_start_time::date WHEN lca.appointment_start_time IS NULL AND lf.last_form_date IS NOT NULL THEN lf.last_form_date::date ELSE NULL END AS last_visit_date,
-		CASE WHEN lca.appointment_start_time >= lf.last_form_date THEN lca.appointment_service WHEN lca.appointment_start_time < lf.last_form_date THEN lf.last_form_type WHEN lca.appointment_start_time IS NOT NULL AND lf.last_form_date IS NULL THEN lca.appointment_service WHEN lca.appointment_start_time IS NULL AND lf.last_form_date IS NOT NULL THEN lf.last_form_type ELSE NULL END AS last_visit_type,
-		CASE WHEN lca.appointment_start_time >= lf.last_form_date THEN (DATE_PART('day',(now())-(lca.appointment_start_time::timestamp)))::int WHEN lca.appointment_start_time < lf.last_form_date THEN (DATE_PART('day',(now())-(lf.last_form_date::timestamp)))::int WHEN lca.appointment_start_time IS NOT NULL AND lf.last_form_date IS NULL THEN (DATE_PART('day',(now())-(lca.appointment_start_time::timestamp)))::int  WHEN lca.appointment_start_time IS NULL AND lf.last_form_date IS NOT NULL THEN (DATE_PART('day',(now())-(lf.last_form_date::timestamp)))::int ELSE NULL END AS days_since_last_visit,
-		fma.appointment_start_time::date AS last_missed_appointment_date,
-		fma.appointment_service AS last_missed_appointment_service,
-		CASE WHEN fma.appointment_start_time IS NOT NULL THEN (DATE_PART('day',(now())-(fma.appointment_start_time::timestamp)))::int ELSE NULL END AS days_since_last_missed_appointment
+		CASE 
+		    WHEN lca.appointment_start_time::date > lf.last_form_date THEN lca.appointment_start_time::date 
+		    WHEN lca.appointment_start_time <= lf.last_form_date THEN lf.last_form_date::date 
+		    WHEN lca.appointment_start_time IS NOT NULL AND lf.last_form_date IS NULL THEN lca.appointment_start_time::date 
+		    WHEN lca.appointment_start_time IS NULL AND lf.last_form_date IS NOT NULL THEN lf.last_form_date::date ELSE NULL END AS last_visit_date,
+		CASE 
+		    WHEN lca.appointment_start_time > lf.last_form_date THEN lca.appointment_service 
+		    WHEN lca.appointment_start_time <= lf.last_form_date THEN lf.last_form_type 
+		    WHEN lca.appointment_start_time IS NOT NULL AND lf.last_form_date IS NULL THEN lca.appointment_service 
+		    WHEN lca.appointment_start_time IS NULL AND lf.last_form_date IS NOT NULL THEN lf.last_form_type ELSE NULL END AS last_visit_type,
+		CASE 
+		    WHEN c.discharge_encounter_id IS NULL AND lca.appointment_start_time > lf.last_form_date THEN (DATE_PART('day',(now())-(lca.appointment_start_time::timestamp)))::int 
+		    WHEN c.discharge_encounter_id IS NULL AND lca.appointment_start_time <= lf.last_form_date THEN (DATE_PART('day',(now())-(lf.last_form_date::timestamp)))::int 
+		    WHEN c.discharge_encounter_id IS NULL AND lca.appointment_start_time IS NOT NULL AND lf.last_form_date IS NULL THEN (DATE_PART('day',(now())-(lca.appointment_start_time::timestamp)))::int 
+		    WHEN c.discharge_encounter_id IS NULL AND lca.appointment_start_time IS NULL AND lf.last_form_date IS NOT NULL THEN (DATE_PART('day',(now())-(lf.last_form_date::timestamp)))::int ELSE NULL END AS days_since_last_visit,
+		CASE WHEN c.discharge_encounter_id IS NULL AND fma.appointment_start_time > lf.last_form_date OR lf.last_form_date IS NULL AND fma.appointment_start_time IS NOT NULL THEN fma.appointment_start_time::date ELSE NULL END AS last_missed_appointment_date,
+		CASE WHEN c.discharge_encounter_id IS NULL AND fma.appointment_start_time > lf.last_form_date OR lf.last_form_date IS NULL AND fma.appointment_start_time IS NOT NULL THEN fma.appointment_service ELSE NULL END AS last_missed_appointment_service,
+		CASE WHEN c.discharge_encounter_id IS NULL AND fma.appointment_start_time > lf.last_form_date OR lf.last_form_date IS NULL AND fma.appointment_start_time IS NOT NULL THEN (DATE_PART('day',(now())-(fma.appointment_start_time::timestamp)))::int ELSE NULL END AS days_since_last_missed_appointment
 	FROM cohort c
 	LEFT OUTER JOIN last_completed_appointment lca 
-		ON c.patient_id = lca.patient_id AND c.initial_visit_date <= lca.appointment_start_time AND c.discharge_date >= lca.appointment_start_time
+		ON c.initial_encounter_id = lca.initial_encounter_id
 	LEFT OUTER JOIN first_missed_appointment fma
-		ON c.patient_id = fma.patient_id AND c.initial_visit_date <= fma.appointment_start_time AND c.discharge_date >= fma.appointment_start_time
+		ON c.initial_encounter_id = fma.initial_encounter_id
 	LEFT OUTER JOIN last_form lf
 		ON c.initial_encounter_id = lf.initial_encounter_id),		
 -- The NCD diagnosis CTEs extract all NCD diagnoses for patients reported between their initial visit and discharge visit. Diagnoses are only reported once. For specific disease groups, the second CTE extracts only the last reported diagnosis among the groups. These groups include types of diabetes, types of epilespy, and hyper-/hypothyroidism. The final CTE pivotes the diagnoses horizontally.

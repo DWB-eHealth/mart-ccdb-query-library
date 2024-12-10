@@ -5,10 +5,10 @@ WITH initial AS (
 	FROM ncd WHERE visit_type = 'Initial visit'),
 cohort AS (
 	SELECT
-		i.patient_id, i.initial_encounter_id, i.initial_visit_location, i.initial_visit_date, CASE WHEN i.initial_visit_order > 1 THEN 'Yes' END readmission, d.encounter_id AS discharge_encounter_id, d.discharge_date, d.patient_outcome AS patient_outcome
+		i.patient_id, i.initial_encounter_id, i.initial_visit_location, i.initial_visit_date, CASE WHEN i.initial_visit_order > 1 THEN 'Yes' END readmission, d.encounter_id AS discharge_encounter_id, d.discharge_date2 AS discharge_date, d.patient_outcome
 	FROM initial i
-	LEFT JOIN (SELECT patient_id, encounter_id, COALESCE(discharge_date::date, date::date) AS discharge_date, patient_outcome FROM ncd WHERE visit_type = 'Discharge visit') d 
-		ON i.patient_id = d.patient_id AND d.discharge_date >= i.initial_visit_date AND (d.discharge_date < i.next_initial_visit_date OR i.next_initial_visit_date IS NULL)),
+	LEFT JOIN (SELECT patient_id, encounter_id, COALESCE(discharge_date::date, date::date) AS discharge_date2, patient_outcome FROM ncd WHERE visit_type = 'Discharge visit') d 
+		ON i.patient_id = d.patient_id AND (d.discharge_date2 IS NULL OR (d.discharge_date2 >= i.initial_visit_date AND (d.discharge_date2 < i.next_initial_visit_date OR i.next_initial_visit_date IS NULL)))),
 -- The NCD diagnosis CTEs extract all NCD diagnoses for patients reported between their initial visit and discharge visit. Diagnoses are only reported once. For specific disease groups, the second CTE extracts only the last reported diagnosis among the groups. These groups include types of diabetes, types of epilespy, and hyper-/hypothyroidism.
 cohort_diagnosis AS (
 	SELECT
@@ -48,13 +48,20 @@ last_form_location AS (
 	GROUP BY c.patient_id, c.initial_encounter_id, c.initial_visit_date, c.discharge_date, nvsl.date, nvsl.visit_location
 	ORDER BY c.patient_id, c.initial_encounter_id, c.initial_visit_date, c.discharge_date, nvsl.date DESC),
 last_completed_appointment AS (
-	SELECT
-		DISTINCT ON (patient_id) patient_id,
-		appointment_start_time,
-		appointment_location
-	FROM patient_appointment_default
-	WHERE appointment_start_time < now() AND appointment_location IS NOT NULL AND (appointment_status = 'Completed' OR appointment_status = 'CheckedIn')
-	ORDER BY patient_id, appointment_start_time DESC),
+	SELECT patient_id, initial_encounter_id, appointment_start_time::date, appointment_service, appointment_location
+	FROM (
+		SELECT
+			pad.patient_id,
+			c.initial_encounter_id,
+			pad.appointment_start_time,
+			pad.appointment_service,
+			pad.appointment_location,
+			ROW_NUMBER() OVER (PARTITION BY pad.patient_id ORDER BY pad.appointment_start_time DESC) AS rn
+		FROM patient_appointment_default pad
+		LEFT OUTER JOIN cohort c
+			ON pad.patient_id = c.patient_id AND c.initial_visit_date <= pad.appointment_start_time::date AND COALESCE(c.discharge_date, CURRENT_DATE) >= pad.appointment_start_time::date
+		WHERE pad.appointment_start_time < now() AND (pad.appointment_status = 'Completed' OR pad.appointment_status = 'CheckedIn')) foo
+	WHERE rn = 1 AND initial_encounter_id IS NOT NULL),
 last_visit_location AS (	
 	SELECT 
 		c.initial_encounter_id,
