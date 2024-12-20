@@ -68,23 +68,14 @@ age AS (
     LEFT OUTER JOIN group_age_current gac USING (patient_id)
     LEFT OUTER JOIN groupe_age_inclusion gai USING (patient_id)),
 
--- CTE with the last follow up visit (date and location)      
-follow_up AS (
-    SELECT 
-        DISTINCT ON (cf.patient_id) 
-        cf.patient_id, 
-        cf.date_of_visit AS last_fu_visit_date, 
-        cf.visit_location AS last_fu_visit_location 
-    FROM "1_client_form" cf
-    WHERE visit_type = 'Follow-up visit'
-    ORDER BY cf.patient_id, cf.date_of_visit DESC),
-
 -- CTE with last visit information - mandatory question (missing diagnosis list and contraceptive list)
 last_mandatory_visit_information AS (
     SELECT 
         DISTINCT ON (cf.patient_id) 
         cf.patient_id,
-        cf.date_of_visit AS date_of_last_visit, 
+        cf.date_of_visit AS date_of_last_visit,
+        cf.visit_location AS last_visit_location,
+        cf.visit_type AS last_visit_type, 
         cf.pregnant AS last_pregnant_status,
         cf.ever_treated_for_sti AS last_ever_treated_for_sti,
         cf.sti_screening AS last_sti_screening,
@@ -252,18 +243,18 @@ SELECT
     pad.county_district,
     "Nationality", 
     "Literacy",
+    a.age_inclusion, 
+    a.groupe_age_inclusion, 
+    a.age_current, 
+    a.groupe_age_current,
     i.date_of_initial_visit, 
     i.initial_visit_location, 
     i.initial_hiv_status_at_visit, 
     i.initial_hiv_testing_at_visit, 
     i.initial_prep_treatment,
-    a.age_inclusion, 
-    a.groupe_age_inclusion, 
-    a.age_current, 
-    a.groupe_age_current,
-    fu.last_fu_visit_date,
-    fu.last_fu_visit_location,
-    lmvi.date_of_last_visit, 
+    lmvi.date_of_last_visit,
+    lmvi.last_visit_location,
+    lmvi.last_visit_type,
     lmvi.last_pregnant_status,
     lmvi.last_ever_treated_for_sti, 
     lmvi.last_sti_screening,
@@ -310,7 +301,6 @@ LEFT OUTER JOIN person_address_default pad ON pi.patient_id = pad.person_id
 LEFT OUTER JOIN person_attributes pa ON pi.patient_id = pa.person_id
 LEFT OUTER JOIN initial i ON pi.patient_id = i.patient_id
 LEFT OUTER JOIN age a ON pi.patient_id = a.patient_id
-LEFT OUTER JOIN follow_up fu ON pi.patient_id = fu.patient_id
 LEFT OUTER JOIN last_mandatory_visit_information lmvi ON pi.patient_id = lmvi.patient_id
 LEFT OUTER JOIN last_hpv_treated lht ON pi.patient_id = lht.patient_id
 LEFT OUTER JOIN last_appointment la ON pi.patient_id = la.patient_id
