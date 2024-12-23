@@ -34,31 +34,37 @@ cohort AS (
 last_form_location AS (    
     SELECT DISTINCT ON (c.patient_id, c.initial_encounter_id, c.initial_visit_date, c.discharge_date) 
         c.initial_encounter_id,
-        nvsl.date_created AS last_form_date,
+        nvsl.date AS last_form_date,
         nvsl.visit_location AS last_form_location
     FROM cohort c
     LEFT OUTER JOIN (
         SELECT 
             patient_id, 
-            date_created::date AS date_created, 
+            date::date AS date, 
             visit_location 
         FROM public.ncd_initial_visit
+         UNION 
+        SELECT 
+            patient_id, 
+            date::date AS date, 
+            visit_location 
+        FROM public.ncd_follow_up_visit
         UNION 
         SELECT 
             patient_id, 
-            date_created::date AS date_created, 
+            date::date AS date, 
             visit_location 
         FROM public.ncd_discharge_visit
     ) nvsl
     ON c.patient_id = nvsl.patient_id 
-       AND c.initial_visit_date <= nvsl.date_created 
-       AND COALESCE(c.discharge_date, CURRENT_DATE) >= nvsl.date_created
+       AND c.initial_visit_date <= nvsl.date 
+       AND COALESCE(c.discharge_date, CURRENT_DATE) >= nvsl.date
     WHERE nvsl.visit_location IS NOT NULL
     GROUP BY 
-        c.patient_id, c.initial_encounter_id, c.initial_visit_date, c.discharge_date, 
-        nvsl.date_created, nvsl.visit_location
+        c.patient_id, c.initial_encounter_id, c.initial_visit_date, c.discharge_date,
+        nvsl.date, nvsl.visit_location
     ORDER BY 
-        c.patient_id, c.initial_encounter_id, c.initial_visit_date, c.discharge_date, nvsl.date_created DESC
+        c.patient_id, c.initial_encounter_id, c.initial_visit_date, c.discharge_date, nvsl.date DESC
 ),
 last_visit_location AS (    
     SELECT 
