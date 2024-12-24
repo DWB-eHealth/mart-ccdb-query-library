@@ -409,7 +409,7 @@ SELECT
 	CASE WHEN last_bp.systolic_blood_pressure <= 140 AND last_bp.diastolic_blood_pressure <= 90 THEN 'Yes' WHEN last_bp.systolic_blood_pressure > 140 OR last_bp.diastolic_blood_pressure > 90 THEN 'No'
 	END AS blood_pressure_control,
 	CASE WHEN Last_HbA1c.last_hba1c < 8 THEN 'Yes' WHEN Last_HbA1c.last_hba1c >= 8 THEN 'No' WHEN Last_HbA1c.last_hba1c IS NULL AND last_fbg.last_fbg < 150 THEN 'Yes' WHEN Last_HbA1c.last_hba1c IS NULL AND last_fbg.last_fbg >= 150 THEN 'No' END AS diabetes_control,
-	cohort.readmission AS Readmission
+	cohort.readmission AS Readmission, cohort.initial_encounter_id
 
 FROM
     cohort
