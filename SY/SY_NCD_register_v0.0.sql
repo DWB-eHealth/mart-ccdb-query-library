@@ -656,12 +656,22 @@ SELECT
   cohort.discharge_date AS Date_of_Discharge, 
   last_form_location.last_form_location AS "Last Visit Location", 
   CASE WHEN cohort.discharge_date IS NULL THEN 'Yes' ELSE NULL END AS "In_Cohort?", 
-  CASE WHEN Last_FUP.date IS NOT NULL THEN (
+  CASE WHEN Last_FUP.date IS NOT NULL AND cohort.discharge_date IS NULL THEN (
     DATE_PART(
       'day', 
       (now())-(Last_FUP.date :: timestamp)
-    )
-  ):: int ELSE NULL END AS days_since_last_visit, 
+    )):: int 
+    WHEN Last_FUP.date IS NULL AND cohort.discharge_date IS NULL THEN (
+        DATE_PART(
+      'day', 
+      (now())-(cohort.initial_visit_date:: timestamp)
+    )):: int 
+        WHEN cohort.discharge_date IS NOT NULL THEN (
+        DATE_PART(
+      'day', 
+      (now())-(cohort.discharge_date:: timestamp)
+    )):: int 
+    ELSE NULL END AS days_since_last_visit, 
   CASE WHEN cohort.discharge_date IS NOT NULL 
   AND cohort.discharge_date > cohort.initial_visit_date THEN cohort.patient_outcome ELSE NULL END AS Patient_Outcome, 
   -- Pivoted Diagnosis 
