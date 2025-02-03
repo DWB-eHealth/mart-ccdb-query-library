@@ -160,8 +160,10 @@ médicament_arv AS (
 	SELECT
 		c.patient_id, c.encounter_id_inclusion, mdd.coded_drug_name
 	FROM cohorte c 
+	LEFT OUTER JOIN instauration_arv ia
+	    ON c.encounter_id_inclusion = ia.encounter_id_inclusion
 	LEFT OUTER JOIN medication_data_default mdd
-		ON c.patient_id = mdd.patient_id AND c.date_inclusion <= mdd.start_date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= mdd.start_date::date
+		ON c.patient_id = mdd.patient_id AND LEAST(ia.date_instauration_arv, c.date_inclusion) <= mdd.start_date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= mdd.start_date::date
 	WHERE mdd.coded_drug_name IN ('ABC 120 mg / 3TC 60 mg, disp. tab.','ABC 600 mg / 3TC 300 mg, tab.','ATV 300 mg / r 100 mg, tab.','AZT 60 mg / 3TC 30 mg , disp. tab.','DARUNAVIR ethanolate (DRV), eq. 600 mg base, tab.','DOLUTEGRAVIR sodium (DTG), eq. 10mg base, disp. tab.','DOLUTEGRAVIR sodium (DTG), eq. 50 mg base, tab.','DORALPVR1P- LPV 40 mg / r 10 mg, granules dans gélule','LPV 200mg / r 50mg, tab.','TDF 300 mg / FTC 200 mg / DTG 50 mg, tab.','TDF 300 mg / FTC 200 mg, tab.','TDF 300mg / 3TC 300mg / DTG 50mg, tab.') AND mdd.calculated_end_date > CURRENT_DATE AND mdd.date_stopped IS NULL),
 médicament_arv_list AS (
 	SELECT
