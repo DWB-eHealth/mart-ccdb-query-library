@@ -106,14 +106,15 @@ last_appointment AS (
     WHERE next_appointment_to_be_scheduled IS NOT NULL
     ORDER BY cf.patient_id, cf.date_of_visit DESC),
 
+-- Last answer completed for use of routine data (not looking the not recorded answer)     
 last_use_of_routine_data AS (
     SELECT 
-        DISTINCT ON (cf.patient_id) 
-        cf.patient_id,
-        cf.use_of_pseudonymized_routine_data_for_the_prep_implementati
-    FROM "1_client_form" cf
-    WHERE use_of_pseudonymized_routine_data_for_the_prep_implementati IS NOT NULL
-    ORDER BY cf.patient_id, cf.date_of_visit DESC),
+    DISTINCT ON (cf.patient_id) 
+    cf.patient_id,
+    cf.use_of_pseudonymized_routine_data_for_the_prep_implementati
+FROM "1_client_form" cf
+WHERE cf.use_of_pseudonymized_routine_data_for_the_prep_implementati IN ('Agreed', 'Objected', 'Withdrew agreement')
+ORDER BY cf.patient_id, cf.date_of_visit DESC;),
 
 -- CTE for contraceptive on going (multiselect)
 co AS (SELECT * FROM (SELECT cf.patient_id, cf.date_of_visit AS date_contraceptive_ongoing, co.contraceptive_ongoing, row_number() over (partition by cf.patient_id ORDER BY cf.date_of_visit DESC) AS rn
