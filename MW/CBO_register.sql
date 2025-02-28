@@ -114,7 +114,7 @@ last_use_of_routine_data AS (
     cf.use_of_pseudonymized_routine_data_for_the_prep_implementati
 FROM "1_client_form" cf
 WHERE cf.use_of_pseudonymized_routine_data_for_the_prep_implementati IN ('Agreed', 'Objected', 'Withdrew agreement')
-ORDER BY cf.patient_id, cf.date_of_visit DESC;),
+ORDER BY cf.patient_id, cf.date_of_visit DESC),
 
 -- CTE for contraceptive on going (multiselect)
 co AS (SELECT * FROM (SELECT cf.patient_id, cf.date_of_visit AS date_contraceptive_ongoing, co.contraceptive_ongoing, row_number() over (partition by cf.patient_id ORDER BY cf.date_of_visit DESC) AS rn
