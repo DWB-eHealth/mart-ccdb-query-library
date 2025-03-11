@@ -27,7 +27,8 @@ filtered_medication AS (
       WHEN LOWER(frequency) = 'thrice a day' THEN 3
       WHEN LOWER(frequency) = 'four times a day' THEN 4
       WHEN LOWER(frequency) = 'five times a day' THEN 5
-      WHEN LOWER(frequency) = 'immediately' THEN 1
+      WHEN LOWER(frequency) = 'immediately' AND "public"."medication_data_default"."coded_drug_name" LIKE '%ISOSORBIDE DINITRATE%' THEN 0.55
+      WHEN LOWER(frequency) = 'immediately' AND "public"."medication_data_default"."coded_drug_name" LIKE '%SALBUTAMOL sulfate%' THEN 9
       WHEN LOWER(frequency) = 'on alternate days' THEN 0.5
       WHEN LOWER(frequency) = 'once a week' THEN 0.14
       WHEN LOWER(frequency) = 'four days a week' THEN 0.57
@@ -44,7 +45,7 @@ filtered_medication AS (
       WHEN LOWER(frequency) = 'every 2 weeks' THEN 0.07
       WHEN LOWER(frequency) = 'every 3 weeks' THEN 0.047
       WHEN LOWER(frequency) = 'once a month' THEN 0.033
-      ELSE 1
+      ELSE 0
     END AS frequency
   FROM
     public.medication_data_default
