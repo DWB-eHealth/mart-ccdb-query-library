@@ -108,7 +108,7 @@ last_visit AS (
 		ON c.initial_encounter_id = lf.initial_encounter_id),		
 -- The last Hepatitis C visit CTE extracts the last visit data per cohort enrollment to look at if there are values reported for illicit drug use, pregnancy, hospitalisation, jaundice, hepatic encephalopathy, ascites, haematemesis, or cirrhosis repoted at the last visit. 
 last_hepc_visit AS (
-	SELECT initial_encounter_id, last_med_visit_date, last_med_visit_type, drug_use_last_visit, pregnant_last_visit, hospitalised_last_visit, jaundice_last_visit, hepatic_encephalopathy_last_visit, ascites_last_visit, haematememesis_last_visit, cirrhosis_last_visit
+	SELECT initial_encounter_id, last_med_visit_date, last_med_visit_type, drug_use_last_visit, pregnant_last_visit, breastfeeding_last_visit, hospitalised_last_visit, jaundice_last_visit, hepatic_encephalopathy_last_visit, ascites_last_visit, haematememesis_last_visit, cirrhosis_last_visit
 	FROM (
 		SELECT  
 			c.patient_id,
@@ -117,6 +117,7 @@ last_hepc_visit AS (
 			hc.visit_type AS last_med_visit_type,
 			hc.illicit_drug_use AS drug_use_last_visit,
 			hc.currently_pregnant AS pregnant_last_visit,
+			hc.currently_breastfeeding AS breastfeeding_last_visit, --T&T update
 			hc.hospitalised_since_last_visit AS hospitalised_last_visit,
 			hc.jaundice AS jaundice_last_visit,
 			hc.hepatic_encephalopathy AS hepatic_encephalopathy_last_visit,
@@ -243,6 +244,7 @@ SELECT
 	END AS age_group_admission,
 	pdd.gender,
 	pa."patientCity" AS camp_location, 
+	pa."Sub_Block" AS sub_block, --T&T update
 	pa."Legal_status",
 	pa."Civil_status",
 	pa."Education_level",
@@ -251,6 +253,7 @@ SELECT
 	pa."Living_conditions",
 	c.initial_visit_date AS enrollment_date,
 	c.readmission,
+	CASE WHEN fvl.visit_type = 'T&T Initial' THEN 'Yes' ELSE NULL END AS Test_and_Treat --T&T update
 	fvl.initial_vl_date,
 	fvl.initial_vl_result,
 	c.initial_visit_location,
@@ -271,6 +274,7 @@ SELECT
 	lhv.last_med_visit_type,
 	lhv.drug_use_last_visit,
 	lhv.pregnant_last_visit,
+	lhv.breastfeeding_last_visit, --T&T update
 	lhv.hospitalised_last_visit,
 	lhv.jaundice_last_visit,
 	lhv.hepatic_encephalopathy_last_visit,
