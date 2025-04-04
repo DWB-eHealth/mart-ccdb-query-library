@@ -342,8 +342,9 @@ SELECT
 	pi."Patient_Identifier",
 	c.patient_id,
 	c.initial_encounter_id,
-	--pa."Other_patient_identifier",
-	--pa."Previous_MSF_code",
+	pa."patientFileNumber",
+	pa."Patient_Unique_ID_CCC_No",
+	pa."facilityForArt",
 	pdd.age AS age_current,
 	CASE 
 		WHEN pdd.age::int <= 4 THEN '0-4'
@@ -373,7 +374,7 @@ SELECT
 	--pa."Legal_status",
 	--pa."Civil_status",
 	--pa."Education_level",
-	--pa."Occupation",
+	pa."Occupation",
 	--pa."Personal_Situation",
 	--pa."Living_conditions",
 	c.initial_visit_date AS enrollment_date,
