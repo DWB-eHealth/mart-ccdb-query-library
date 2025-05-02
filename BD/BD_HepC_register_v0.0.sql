@@ -176,7 +176,8 @@ first_vl AS (
 		tto.initial_encounter_id,
 		COALESCE(vli.date_of_sample_collection::date, vli.date::date) AS initial_vl_date, 
 		vli.hcv_rna_pcr_qualitative_result AS initial_vl_result,
-		vli.visit_type
+		vli.visit_type,
+		vli.initial_test_and_treat_pcr
 	FROM treatment_order tto
 	LEFT OUTER JOIN vitals_and_laboratory_information vli
 		ON tto.patient_id = vli.patient_id AND tto.treatment_start_date >= COALESCE(vli.date_of_sample_collection::date, vli.date::date)
@@ -244,7 +245,7 @@ SELECT
 	END AS age_group_admission,
 	pdd.gender,
 	pa."patientCity" AS camp_location, 
-	pa."Sub_Block" AS sub_block, --T&T update
+	pa."Subblock" AS subblock,
 	pa."Legal_status",
 	pa."Civil_status",
 	pa."Education_level",
@@ -253,7 +254,7 @@ SELECT
 	pa."Living_conditions",
 	c.initial_visit_date AS enrollment_date,
 	c.readmission,
-	CASE WHEN fvl.visit_type = 'T&T Initial' THEN 'Yes' ELSE NULL END AS Test_and_Treat --T&T update
+	CASE WHEN fvl.initial_test_and_treat_pcr = 'Yes' THEN fvl.initial_test_and_treat_pcr ELSE NULL END AS Test_and_Treat, --T&T update
 	fvl.initial_vl_date,
 	fvl.initial_vl_result,
 	c.initial_visit_location,
