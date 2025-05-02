@@ -53,6 +53,11 @@ ncd_diagnosis_list AS (
 	SELECT initial_encounter_id, STRING_AGG(diagnosis, ', ') AS diagnosis_list
 	FROM cohort_diagnosis_last
 	GROUP BY initial_encounter_id),
+
+-- -- add and pivot complications with date??? what is one complication is reported more than once? 
+
+-- -- add and pivot other diagnosis 
+
 -- The risk factor CTEs pivot risk factor data horizontally from the NCD form. Only the last risk factors are reported per cohort enrollment are present. 
 current_lifestyle_pivot AS (
 	SELECT 
@@ -86,15 +91,15 @@ last_current_lifestyle AS (
 	WHERE clp.date_of_visit IS NOT NULL	
 	GROUP BY c.patient_id, c.initial_encounter_id, c.initial_visit_date, c.outcome_encounter_id, c.outcome_date, clp.date_of_visit, clp.tobacco_use, clp.alcohol_use, clp.adequate_physical_activity,
 		clp.healthy_diet
-	ORDER BY c.patient_id, c.initial_encounter_id, c.initial_visit_date, clp.date_of_visit DESC),/*	
+	ORDER BY c.patient_id, c.initial_encounter_id, c.initial_visit_date, clp.date_of_visit DESC),
 -- The hospitalised CTE checks there is a hospitlisation reported in visits taking place in the last 6 months. 
 hospitalisation_last_6m AS (
 	SELECT DISTINCT ON (c.patient_id, c.initial_encounter_id) c.patient_id,	c.initial_encounter_id, COUNT(n.hospitalised_since_last_visit) AS nb_hospitalised_last_6m, CASE WHEN n.hospitalised_since_last_visit IS NOT NULL THEN 'Yes' ELSE 'No' END AS hospitalised_last_6m
 		FROM cohort c
-		LEFT OUTER JOIN ncd n
-			ON c.patient_id = n.patient_id AND c.initial_visit_date <= n.date::date AND COALESCE(c.outcome_date, CURRENT_DATE) >= n.date::date
-		WHERE n.hospitalised_since_last_visit = 'Yes' and n.date <= current_date and n.date >= current_date - interval '6 months'
-		GROUP BY c.patient_id, c.initial_encounter_id, n.hospitalised_since_last_visit),*/
+		LEFT OUTER JOIN ncd_consultations n
+			ON c.patient_id = n.patient_id AND c.initial_visit_date <= n.date_of_visit::date AND COALESCE(c.outcome_date, CURRENT_DATE) >= n.date_of_visit::date
+		WHERE n.hospitalised_since_last_visit = 'Yes' and n.date_of_visit <= current_date and n.date_of_visit >= current_date - interval '6 months'
+		GROUP BY c.patient_id, c.initial_encounter_id, n.hospitalised_since_last_visit),
 -- The last foot exam CTE extracts the date of the last foot exam performed per cohort enrollment.
 last_foot_exam AS (
 	SELECT 
@@ -125,6 +130,9 @@ asthma_severity AS (
 		ON c.patient_id = n.patient_id AND c.initial_visit_date <= n.date_of_visit::date AND COALESCE(c.outcome_date, CURRENT_DATE) >= n.date_of_visit::date
 	WHERE n.asthma_exacerbation_level IS NOT NULL
 	ORDER BY c.patient_id, c.initial_encounter_id, n.patient_id, n.date_of_visit::date DESC),
+
+-- -- add last asthma exacerbation, COPD exacerbation, hypertention stage, last TB screening 
+
 -- The last NCD visit CTE extracts the last NCD visit data per cohort enrollment to look at if there are values reported for pregnancy, family planning, hospitalization, missed medication, seizures, or asthma/COPD exacerbations repoted at the last visit. 
 last_ncd_form AS (
 	SELECT 
@@ -137,17 +145,23 @@ last_ncd_form AS (
 		DATE_PART('day',(now())-(n.date_of_visit::timestamp))::int AS days_since_last_visit,
 		n.visit_type AS last_ncd_form_type,
 		n.visit_location AS last_ncd_form_location,
+		n.type_of_service_package_provided AS last_service_package,
+		n.dsdm_group_name_and_number AS last_dsdm_group,
+		CASE WHEN n.scheduled_visit = 'No' THEN 'Yes' END AS last_visit_unscheduled,
 		CASE WHEN n.currently_pregnant = 'Yes' THEN 'Yes' END AS pregnant_last_visit,
-		--CASE WHEN n.family_planning_counseling = 'Yes' THEN 'Yes' END AS fp_last_visit,
 		CASE WHEN n.hospitalised_since_last_visit = 'Yes' THEN 'Yes' END AS hospitalised_last_visit,
-		--CASE WHEN n.missed_medication_doses_in_last_7_days = 'Yes' THEN 'Yes' END AS missed_medication_last_visit,
-		CASE WHEN n.seizure_since_last_visit = 'Yes' THEN 'Yes' END AS seizures_last_visit--,
-		--CASE WHEN n.exacerbation_per_week IS NOT NULL AND n.exacerbation_per_week > 0 THEN 'Yes' END AS exacerbations_last_visit,
-		--n.exacerbation_per_week AS nb_exacerbations_last_visit
+		CASE WHEN n.seizure_since_last_visit = 'Yes' THEN 'Yes' END AS seizures_last_visit,
+		CASE WHEN n.referred_for_tb_management = 'Yes' THEN 'Yes' END AS referred_tb_last_visit,
+		n.patient_s_stability AS last_stability,
+		n.provider AS last_provider,
+		n.dsdm_visit_status AS last_dsdm_visit_status
 	FROM cohort c
 	LEFT OUTER JOIN ncd_consultations n
 		ON c.patient_id = n.patient_id AND c.initial_visit_date <= n.date_of_visit::date AND COALESCE(c.outcome_date, CURRENT_DATE) >= n.date_of_visit::date
 	ORDER BY c.patient_id, c.initial_encounter_id, n.patient_id, n.date_of_visit::date DESC),
+
+-- -- pivot and add reason for unscheduled visit
+
 -- The last BP CTE extracts the last complete blood pressure measurements reported per cohort enrollment. Uses date reported on form. If no date is present, uses date of sample collection. If neither date or date of sample collection are present, results are not considered. 
 
 -- -- add last second reading 
@@ -211,7 +225,7 @@ last_hba1c AS (
 	LEFT OUTER JOIN vitals_and_laboratory_information vli
 		ON c.patient_id = vli.patient_id AND c.initial_visit_date <= vli.date_of_sample_collection AND COALESCE(c.outcome_date, CURRENT_DATE) >= vli.date_of_sample_collection
 	WHERE vli.date_of_sample_collection IS NOT NULL AND vli.hba1c IS NOT NULL
-	ORDER BY c.patient_id, c.initial_encounter_id, vli.patient_id, vli.date_of_sample_collection DESC),/*
+	ORDER BY c.patient_id, c.initial_encounter_id, vli.patient_id, vli.date_of_sample_collection DESC),
 -- The last GFR CTE extracts the last GFR measurement reported per cohort enrollment. Uses date of sample collection reported on form. If no date of sample collection is present, uses date of form. If neither date or date of sample collection are present, results are not considered. 
 last_gfr AS (
 	SELECT 
@@ -221,12 +235,12 @@ last_gfr AS (
 		c.outcome_encounter_id,
 		c.outcome_date, 
 		vli.date_of_sample_collection AS last_gfr_date, 
-		vli.gfr_ml_min_1_73m2 AS last_gfr
+		vli.gfr AS last_gfr
 	FROM cohort c
 	LEFT OUTER JOIN vitals_and_laboratory_information vli
 		ON c.patient_id = vli.patient_id AND c.initial_visit_date <= vli.date_of_sample_collection AND COALESCE(c.outcome_date, CURRENT_DATE) >= vli.date_of_sample_collection
-	WHERE vli.date_of_sample_collection IS NOT NULL AND vli.gfr_ml_min_1_73m2 IS NOT NULL
-	ORDER BY c.patient_id, c.initial_encounter_id, vli.patient_id, vli.date_of_sample_collection DESC),*/
+	WHERE vli.date_of_sample_collection IS NOT NULL AND vli.gfr IS NOT NULL
+	ORDER BY c.patient_id, c.initial_encounter_id, vli.patient_id, vli.date_of_sample_collection DESC),
 -- The last creatinine CTE extracts the last creatinine measurement reported per cohort enrollment. Uses date of sample collection reported on form. If no date of sample collection is present, uses date of form. If neither date or date of sample collection are present, results are not considered. 
 last_creatinine AS (
 	SELECT 
@@ -312,18 +326,21 @@ SELECT
 	lnf.last_ncd_form_location,
 	lnf.last_ncd_form_date,
 	lnf.last_ncd_form_type,	
+	lnf.last_provider,
 	lnf.days_since_last_visit,
+	lnf.last_service_package,
+	lnf.last_dsdm_group,
+	lnf.last_dsdm_visit_status,
+	lnf.last_visit_unscheduled,
+	lnf.last_stability,
 	c.outcome_date,
 	c.patient_outcome,
 	lnf.pregnant_last_visit,
-	--lnf.fp_last_visit,
 	lnf.hospitalised_last_visit,
-	--lnf.missed_medication_last_visit,
 	lnf.seizures_last_visit,
-	--lnf.exacerbations_last_visit,
-	--lnf.nb_exacerbations_last_visit,
-	--h6m.nb_hospitalised_last_6m,
-	--h6m.hospitalised_last_6m,
+	lnf.referred_tb_last_visit,
+	h6m.nb_hospitalised_last_6m,
+	h6m.hospitalised_last_6m,
 	lfe.last_foot_exam_date,
 	asev.asthma_exacerbation_level,
 	lbp.systolic_blood_pressure,
@@ -339,9 +356,9 @@ SELECT
 	CASE WHEN lbg.last_hba1c <= 6.5 THEN '0-6.5%' WHEN lbg.last_hba1c BETWEEN 6.6 AND 8 THEN '6.6-8.0%' WHEN lbg.last_hba1c > 8 THEN '>8%' END AS last_hba1c_grouping, 
 	lbg.last_hba1c_date,
 	CASE WHEN lbg.last_hba1c < 8 THEN 'Yes' WHEN lbg.last_hba1c >= 8 THEN 'No' WHEN lbg.last_hba1c IS NULL AND lfbg.last_fbg < 150 THEN 'Yes' WHEN lbg.last_hba1c IS NULL AND lfbg.last_fbg >= 150 THEN 'No' END AS diabetes_control,
-	--lgfr.last_gfr,
-	--lgfr.last_gfr_date,
-	--CASE WHEN lgfr.last_gfr < 30 THEN 'Yes' WHEN lgfr.last_gfr >= 30 THEN 'No' END AS gfr_control,
+	lgfr.last_gfr,
+	lgfr.last_gfr_date,
+	CASE WHEN lgfr.last_gfr < 30 THEN 'Yes' WHEN lgfr.last_gfr >= 30 THEN 'No' END AS gfr_control,
 	lc.last_creatinine,
 	lc.last_creatinine_date,
 	lh.last_hiv,
@@ -376,9 +393,9 @@ LEFT OUTER JOIN ncd_diagnosis_list ndl
 LEFT OUTER JOIN last_current_lifestyle lrf
 	ON c.initial_encounter_id = lrf.initial_encounter_id
 LEFT OUTER JOIN last_ncd_form lnf
-	ON c.initial_encounter_id = lnf.initial_encounter_id/*
+	ON c.initial_encounter_id = lnf.initial_encounter_id
 LEFT OUTER JOIN hospitalisation_last_6m h6m
-	ON c.initial_encounter_id = h6m.initial_encounter_id*/
+	ON c.initial_encounter_id = h6m.initial_encounter_id
 LEFT OUTER JOIN last_foot_exam lfe
 	ON c.initial_encounter_id = lfe.initial_encounter_id
 LEFT OUTER JOIN asthma_severity asev
@@ -391,8 +408,8 @@ LEFT OUTER JOIN last_fbg lfbg
 	ON c.initial_encounter_id = lfbg.initial_encounter_id
 LEFT OUTER JOIN last_hba1c lbg
 	ON c.initial_encounter_id = lbg.initial_encounter_id
---LEFT OUTER JOIN last_gfr lgfr
---	ON c.initial_encounter_id = lgfr.initial_encounter_id
+LEFT OUTER JOIN last_gfr lgfr
+	ON c.initial_encounter_id = lgfr.initial_encounter_id
 LEFT OUTER JOIN last_creatinine lc
 	ON c.initial_encounter_id = lc.initial_encounter_id
 LEFT OUTER JOIN last_hiv lh
