@@ -27,9 +27,10 @@ cohort_diagnosis_last AS (
             SELECT
                 cd.*,
                 CASE
-                    WHEN diagnosis IN ('Asthma', 'Chronic obstructive pulmonary disease', 'Hypertension', 'Sickle cell disease') THEN 'Group1'
+                    WHEN diagnosis IN ('Asthma', 'Chronic obstructive pulmonary disease', 'Sickle cell disease') THEN 'Group1'
                     WHEN diagnosis IN ('Diabetes mellitus, type 1', 'Diabetes mellitus, type 2') THEN 'Group2'
                     WHEN diagnosis IN ('Focal epilepsy', 'Generalised epilepsy', 'Unclassified epilepsy') THEN 'Group3'
+					WHEN diagnosis IN ('Hypertension Stage 1', 'Hypertension Stage 2', 'Hypertension Stage 3') THEN 'Group4'
                     ELSE 'Other'
                 END AS diagnosis_group
             FROM cohort_diagnosis cd) cdg) foo
@@ -43,7 +44,9 @@ ncd_diagnosis_pivot AS (
 		MAX (CASE WHEN diagnosis = 'Chronic obstructive pulmonary disease' THEN date_of_diagnosis ELSE NULL END) AS copd,
 		MAX (CASE WHEN diagnosis = 'Diabetes mellitus, type 1' THEN date_of_diagnosis ELSE NULL END) AS diabetes_type1,
 		MAX (CASE WHEN diagnosis = 'Diabetes mellitus, type 2' THEN date_of_diagnosis ELSE NULL END) AS diabetes_type2,
-		MAX (CASE WHEN diagnosis = 'Hypertension' THEN date_of_diagnosis ELSE NULL END) AS hypertension,
+		MAX (CASE WHEN diagnosis = 'Hypertension Stage 1' THEN date_of_diagnosis ELSE NULL END) AS hypertension_stage1,
+		MAX (CASE WHEN diagnosis = 'Hypertension Stage 2' THEN date_of_diagnosis ELSE NULL END) AS hypertension_stage2,
+		MAX (CASE WHEN diagnosis = 'Hypertension Stage 3' THEN date_of_diagnosis ELSE NULL END) AS hypertension_stage3,
 		MAX (CASE WHEN diagnosis = 'Focal epilepsy' THEN date_of_diagnosis ELSE NULL END) AS focal_epilepsy,
 		MAX (CASE WHEN diagnosis = 'Generalised epilepsy' THEN date_of_diagnosis ELSE NULL END) AS generalised_epilepsy,
 		MAX (CASE WHEN diagnosis = 'Unclassified epilepsy' THEN date_of_diagnosis ELSE NULL END) AS unclassified_epilepsy
@@ -163,9 +166,6 @@ last_ncd_form AS (
 -- -- pivot and add reason for unscheduled visit
 
 -- The last BP CTE extracts the last complete blood pressure measurements reported per cohort enrollment. Uses date reported on form. If no date is present, uses date of sample collection. If neither date or date of sample collection are present, results are not considered. 
-
--- -- add last second reading 
-
 last_bp AS (
 	SELECT 
 		DISTINCT ON (c.patient_id, c.initial_encounter_id) c.patient_id,
@@ -174,12 +174,28 @@ last_bp AS (
 		c.outcome_encounter_id,
 		c.outcome_date, 
 		vli.date_vitals_taken AS last_bp_date,
-		vli.systolic_blood_pressure,
-		vli.diastolic_blood_pressure
+		vli.systolic_blood_pressure AS last_systolic_first_reading,
+		vli.diastolic_blood_pressure AS last_diastolic_first_reading,
+		vli.systolic_blood_pressure_second_reading AS last_systolic_second_reading,
+		vli.diastolic_blood_pressure_second_reading AS last_diastolic_second_reading,
+		CASE
+			WHEN COALESCE(vli.systolic_blood_pressure, 999) < COALESCE(vli.systolic_blood_pressure_second_reading, 999) THEN vli.systolic_blood_pressure
+			WHEN COALESCE(vli.systolic_blood_pressure, 999) > COALESCE(vli.systolic_blood_pressure_second_reading, 999) THEN vli.systolic_blood_pressure_second_reading
+			WHEN vli.systolic_blood_pressure = vli.systolic_blood_pressure_second_reading AND COALESCE(vli.diastolic_blood_pressure, 999) < COALESCE(vli.diastolic_blood_pressure_second_reading, 999) THEN vli.systolic_blood_pressure
+			WHEN vli.systolic_blood_pressure = vli.systolic_blood_pressure_second_reading AND COALESCE(vli.diastolic_blood_pressure, 999) > COALESCE(vli.diastolic_blood_pressure_second_reading, 999) THEN vli.systolic_blood_pressure_second_reading
+			WHEN vli.systolic_blood_pressure = vli.systolic_blood_pressure_second_reading AND vli.diastolic_blood_pressure = vli.diastolic_blood_pressure_second_reading THEN vli.systolic_blood_pressure_second_reading
+		END AS last_systolic_lowest,
+		CASE
+			WHEN COALESCE(vli.systolic_blood_pressure, 999) < COALESCE(vli.systolic_blood_pressure_second_reading, 999) THEN vli.diastolic_blood_pressure
+			WHEN COALESCE(vli.systolic_blood_pressure, 999) > COALESCE(vli.systolic_blood_pressure_second_reading, 999) THEN vli.diastolic_blood_pressure_second_reading
+			WHEN vli.systolic_blood_pressure = vli.systolic_blood_pressure_second_reading AND COALESCE(vli.diastolic_blood_pressure, 999) < COALESCE(vli.diastolic_blood_pressure_second_reading, 999) THEN vli.diastolic_blood_pressure
+			WHEN vli.systolic_blood_pressure = vli.systolic_blood_pressure_second_reading AND COALESCE(vli.diastolic_blood_pressure, 999) > COALESCE(vli.diastolic_blood_pressure_second_reading, 999) THEN vli.diastolic_blood_pressure_second_reading
+			WHEN vli.systolic_blood_pressure = vli.systolic_blood_pressure_second_reading AND vli.diastolic_blood_pressure = vli.diastolic_blood_pressure_second_reading THEN vli.diastolic_blood_pressure_second_reading
+		END AS last_diastolic_lowest
 	FROM cohort c
 	LEFT OUTER JOIN vitals_and_laboratory_information vli
 		ON c.patient_id = vli.patient_id AND c.initial_visit_date <= vli.date_vitals_taken AND COALESCE(c.outcome_date, CURRENT_DATE) >= vli.date_vitals_taken 
-	WHERE vli.date_vitals_taken IS NOT NULL AND vli.systolic_blood_pressure IS NOT NULL AND vli.diastolic_blood_pressure IS NOT NULL
+	WHERE vli.date_vitals_taken IS NOT NULL AND ((vli.systolic_blood_pressure IS NOT NULL AND vli.diastolic_blood_pressure IS NOT NULL) OR (vli.systolic_blood_pressure_second_reading IS NOT NULL AND vli.diastolic_blood_pressure_second_reading IS NOT NULL))
 	ORDER BY c.patient_id, c.initial_encounter_id, vli.patient_id, vli.date_vitals_taken DESC),
 -- The last BMI CTE extracts the last BMI measurement reported per cohort enrollment. Uses date reported on form. If no date is present, uses date of sample collection. If neither date or date of sample collection are present, results are not considered. 
 last_bmi AS (
@@ -256,13 +272,39 @@ last_creatinine AS (
 		ON c.patient_id = vli.patient_id AND c.initial_visit_date <= vli.date_of_sample_collection AND COALESCE(c.outcome_date, CURRENT_DATE) >= vli.date_of_sample_collection
 	WHERE vli.date_of_sample_collection IS NOT NULL AND vli.creatinine IS NOT NULL
 	ORDER BY c.patient_id, c.initial_encounter_id, vli.patient_id, vli.date_of_sample_collection DESC),
+-- The last ASAT CTE extracts the last ASAT measurement reported per cohort enrollment. Uses date of sample collection reported on form. If no date of sample collection is present, uses date of form. If neither date or date of sample collection are present, results are not considered. 
+last_asat AS (
+	SELECT 
+		DISTINCT ON (c.patient_id, c.initial_encounter_id) c.patient_id,
+		c.initial_encounter_id,
+		c.initial_visit_date, 
+		c.outcome_encounter_id,
+		c.outcome_date, 
+		vli.date_of_sample_collection AS last_asat_date, 
+		vli.asat AS last_asat
+	FROM cohort c
+	LEFT OUTER JOIN vitals_and_laboratory_information vli
+		ON c.patient_id = vli.patient_id AND c.initial_visit_date <= vli.date_of_sample_collection AND COALESCE(c.outcome_date, CURRENT_DATE) >= vli.date_of_sample_collection
+	WHERE vli.date_of_sample_collection IS NOT NULL AND vli.asat IS NOT NULL
+	ORDER BY c.patient_id, c.initial_encounter_id, vli.patient_id, vli.date_of_sample_collection DESC),
+-- The last ALAT CTE extracts the last ALAT measurement reported per cohort enrollment. Uses date of sample collection reported on form. If no date of sample collection is present, uses date of form. If neither date or date of sample collection are present, results are not considered. 
+last_alat AS (
+	SELECT 
+		DISTINCT ON (c.patient_id, c.initial_encounter_id) c.patient_id,
+		c.initial_encounter_id,
+		c.initial_visit_date, 
+		c.outcome_encounter_id,
+		c.outcome_date, 
+		vli.date_of_sample_collection AS last_alat_date, 
+		vli.alat AS last_alat
+	FROM cohort c
+	LEFT OUTER JOIN vitals_and_laboratory_information vli
+		ON c.patient_id = vli.patient_id AND c.initial_visit_date <= vli.date_of_sample_collection AND COALESCE(c.outcome_date, CURRENT_DATE) >= vli.date_of_sample_collection
+	WHERE vli.date_of_sample_collection IS NOT NULL AND vli.alat IS NOT NULL
+	ORDER BY c.patient_id, c.initial_encounter_id, vli.patient_id, vli.date_of_sample_collection DESC),
 
--- -- Add last ASAT and ALAT to registry // ask Anjoli or look in SKD indicators for htis
 
--- The last HIV test CTE extracts the last HIV test result reported per cohort enrollment. Uses date of sample collection reported on form. If no date of sample collection is present, uses date of form. If neither date or date of sample collection are present, results are not considered. 
-
--- -- need to include initial HIV from NCD form
-
+-- The last HIV test CTE extracts the last HIV test result reported per cohort enrollment. Result is either from the NCD consultation form or the Vitals and lab form, which ever test is reported most recently. In the NCD consultation form, the HIV test result and HIV test result date (or visit date is test result date is incomplete) need to both be completed. In the Vitals and Lab form, the HIV test result and HIV test date both need to be complted.
 last_hiv AS (
 	SELECT 
 		DISTINCT ON (c.patient_id, c.initial_encounter_id) c.patient_id,
@@ -271,11 +313,14 @@ last_hiv AS (
 		c.outcome_encounter_id,
 		c.outcome_date, 
 		vli.date_of_hiv_test AS last_hiv_date, 
-		vli.hiv_test_result AS last_hiv
+		vli.hiv_test_result AS last_hiv,
+		vli.form_field_path AS hiv_result_source
 	FROM cohort c
-	LEFT OUTER JOIN vitals_and_laboratory_information vli
+	LEFT OUTER JOIN (
+		SELECT patient_id, date_of_hiv_test, hiv_test_result, form_field_path FROM vitals_and_laboratory_information WHERE date_of_hiv_test IS NOT NULL AND hiv_test_result IS NOT NULL 
+		UNION
+		SELECT patient_id, COALESCE(date_last_tested_for_hiv, date_of_visit) AS date_of_hiv_test, hiv_status_at_initial_visit AS hiv_test_result, form_field_path FROM ncd_consultations WHERE COALESCE(date_last_tested_for_hiv, date_of_visit) IS NOT NULL AND hiv_status_at_initial_visit IS NOT NULL) vli
 		ON c.patient_id = vli.patient_id AND c.initial_visit_date <= vli.date_of_hiv_test AND COALESCE(c.outcome_date, CURRENT_DATE) >= vli.date_of_hiv_test
-	WHERE vli.date_of_hiv_test IS NOT NULL AND vli.hiv_test_result IS NOT NULL
 	ORDER BY c.patient_id, c.initial_encounter_id, vli.patient_id, vli.date_of_hiv_test DESC)
 -- Main query --
 SELECT
@@ -310,13 +355,11 @@ SELECT
 		ELSE NULL
 	END AS age_group_admission,
 	pdd.gender,
-	--pa."patientCity" AS camp_location, 
-	--pa."Legal_status",
-	--pa."Civil_status",
-	--pa."Education_level",
+	pad.city_village AS county,
+	pad.state_province AS sub_county,
+	pad.county_district AS ward,
+	pad.address2 AS village,
 	pa."Occupation",
-	--pa."Personal_Situation",
-	--pa."Living_conditions",
 	c.initial_visit_date AS enrollment_date,
 	CASE WHEN c.outcome_date IS NULL THEN 'Yes' END AS in_cohort,
 	CASE WHEN ((DATE_PART('year', CURRENT_DATE) - DATE_PART('year', c.initial_visit_date)) * 12 + (DATE_PART('month', CURRENT_DATE) - DATE_PART('month', c.initial_visit_date))) >= 6 AND c.outcome_date IS NULL THEN 'Yes' END AS in_cohort_6m,
@@ -343,10 +386,16 @@ SELECT
 	h6m.hospitalised_last_6m,
 	lfe.last_foot_exam_date,
 	asev.asthma_exacerbation_level,
-	lbp.systolic_blood_pressure,
-	lbp.diastolic_blood_pressure,
-	CASE WHEN lbp.systolic_blood_pressure IS NOT NULL AND lbp.diastolic_blood_pressure IS NOT NULL THEN CONCAT(lbp.systolic_blood_pressure,'/',lbp.diastolic_blood_pressure) END AS blood_pressure,
-	CASE WHEN lbp.systolic_blood_pressure <= 140 AND lbp.diastolic_blood_pressure <= 90 THEN 'Yes' WHEN lbp.systolic_blood_pressure > 140 OR lbp.diastolic_blood_pressure > 90 THEN 'No' END AS blood_pressure_control,
+	lbp.last_systolic_first_reading,
+	lbp.last_diastolic_first_reading,
+	CASE WHEN lbp.last_systolic_first_reading IS NOT NULL AND lbp.last_diastolic_first_reading IS NOT NULL THEN CONCAT(lbp.last_systolic_first_reading,'/',lbp.last_diastolic_first_reading) END AS last_bp_first_reading,
+	lbp.last_systolic_second_reading,
+	lbp.last_diastolic_second_reading,
+	CASE WHEN lbp.last_systolic_second_reading IS NOT NULL AND lbp.last_diastolic_second_reading IS NOT NULL THEN CONCAT(lbp.last_systolic_second_reading,'/',lbp.last_diastolic_second_reading) END AS last_bp_second_reading,
+	lbp.last_systolic_lowest,
+	lbp.last_diastolic_lowest,
+	CASE WHEN lbp.last_systolic_lowest IS NOT NULL AND lbp.last_diastolic_lowest IS NOT NULL THEN CONCAT(lbp.last_systolic_lowest,'/',lbp.last_diastolic_lowest) END AS last_bp_lowest,
+	CASE WHEN lbp.last_systolic_lowest <= 130 AND lbp.last_diastolic_lowest <= 90 THEN 'Yes' WHEN lbp.last_systolic_lowest > 130 OR lbp.last_diastolic_lowest > 90 THEN 'No' END AS last_bp_control,
 	lbp.last_bp_date,
 	lbmi.last_bmi,
 	lbmi.last_bmi_date,
@@ -361,14 +410,22 @@ SELECT
 	CASE WHEN lgfr.last_gfr < 30 THEN 'Yes' WHEN lgfr.last_gfr >= 30 THEN 'No' END AS gfr_control,
 	lc.last_creatinine,
 	lc.last_creatinine_date,
+	lal.last_alat,
+	lal.last_alat_date,
+	las.last_asat,
+	las.last_asat_date,
 	lh.last_hiv,
 	lh.last_hiv_date,
+	lh.hiv_result_source,
 	ndx.asthma,
 	ndx.copd,
 	ndx.diabetes_type1,
 	ndx.diabetes_type2,
 	CASE WHEN ndx.diabetes_type1 IS NOT NULL OR ndx.diabetes_type2 IS NOT NULL THEN 1 END AS diabetes_any,
-	ndx.hypertension,
+	ndx.hypertension_stage1,
+	ndx.hypertension_stage2,
+	ndx.hypertension_stage3,
+	CASE WHEN ndx.hypertension_stage1 IS NOT NULL OR ndx.hypertension_stage2 IS NOT NULL OR ndx.hypertension_stage3 IS NOT NULL THEN 1 END AS hypertension_any,
 	ndx.focal_epilepsy,
 	ndx.generalised_epilepsy,
 	ndx.unclassified_epilepsy,
@@ -384,6 +441,8 @@ LEFT OUTER JOIN person_attributes pa
 	ON c.patient_id = pa.person_id
 LEFT OUTER JOIN person_details_default pdd 
 	ON c.patient_id = pdd.person_id
+LEFT OUTER JOIN person_address_default pad 
+	ON c.patient_id = pad.person_id
 LEFT OUTER JOIN patient_encounter_details_default ped 
 	ON c.initial_encounter_id = ped.encounter_id
 LEFT OUTER JOIN ncd_diagnosis_pivot ndx
@@ -412,5 +471,9 @@ LEFT OUTER JOIN last_gfr lgfr
 	ON c.initial_encounter_id = lgfr.initial_encounter_id
 LEFT OUTER JOIN last_creatinine lc
 	ON c.initial_encounter_id = lc.initial_encounter_id
+LEFT OUTER JOIN last_alat lal
+	ON c.initial_encounter_id = lal.initial_encounter_id
+LEFT OUTER JOIN last_asat las
+	ON c.initial_encounter_id = las.initial_encounter_id
 LEFT OUTER JOIN last_hiv lh
 	ON c.initial_encounter_id = lh.initial_encounter_id;
