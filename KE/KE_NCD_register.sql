@@ -57,7 +57,7 @@ ncd_diagnosis_list AS (
 	FROM cohort_diagnosis_last
 	GROUP BY initial_encounter_id),
 
--- -- add and pivot complications with date??? what is one complication is reported more than once? 
+-- -- add and pivot complications with date reported. What if one complication is reported more than once? Which complications have an expiration date?
 
 -- -- add and pivot other diagnosis 
 
@@ -118,8 +118,8 @@ last_foot_exam AS (
 		ON c.patient_id = n.patient_id AND c.initial_visit_date <= n.date_of_visit::date AND COALESCE(c.outcome_date, CURRENT_DATE) >= n.date_of_visit::date
 	WHERE n.foot_assessment_outcome IS NOT NULL
 	ORDER BY c.patient_id, c.initial_encounter_id, n.patient_id, n.date_of_visit::date DESC),
--- The asthma severity CTE extracts the last asthma severity reported per cohort enrollment.
-asthma_severity AS (
+-- The asthma exacerbation level CTE extracts the last asthma exacerbation level reported per cohort enrollment.
+asthma_exacerbation AS (
 	SELECT 
 		DISTINCT ON (c.patient_id, c.initial_encounter_id) c.patient_id,
 		c.initial_encounter_id,
@@ -127,15 +127,57 @@ asthma_severity AS (
 		c.outcome_encounter_id,
 		c.outcome_date, 
 		n.date_of_visit::date,
-		n.asthma_exacerbation_level
+		n.asthma_exacerbation_level AS last_asthma_exacerbation_level
 	FROM cohort c
 	LEFT OUTER JOIN ncd_consultations n
 		ON c.patient_id = n.patient_id AND c.initial_visit_date <= n.date_of_visit::date AND COALESCE(c.outcome_date, CURRENT_DATE) >= n.date_of_visit::date
 	WHERE n.asthma_exacerbation_level IS NOT NULL
 	ORDER BY c.patient_id, c.initial_encounter_id, n.patient_id, n.date_of_visit::date DESC),
-
--- -- add last asthma exacerbation, COPD exacerbation, hypertention stage, last TB screening 
-
+-- The COPD exacerbation level CTE extracts the last COPD exacerbation level reported per cohort enrollment.
+copd_exacerbation AS (
+	SELECT 
+		DISTINCT ON (c.patient_id, c.initial_encounter_id) c.patient_id,
+		c.initial_encounter_id,
+		c.initial_visit_date, 
+		c.outcome_encounter_id,
+		c.outcome_date, 
+		n.date_of_visit::date,
+		n.copd_exacerbation_level AS last_copd_exacerbation_level
+	FROM cohort c
+	LEFT OUTER JOIN ncd_consultations n
+		ON c.patient_id = n.patient_id AND c.initial_visit_date <= n.date_of_visit::date AND COALESCE(c.outcome_date, CURRENT_DATE) >= n.date_of_visit::date
+	WHERE n.copd_exacerbation_level IS NOT NULL
+	ORDER BY c.patient_id, c.initial_encounter_id, n.patient_id, n.date_of_visit::date DESC),
+-- The TB x-ray screening CTE extracts the last TB x-ray screening reported per cohort enrollment.
+tb_xray AS (
+	SELECT 
+		DISTINCT ON (c.patient_id, c.initial_encounter_id) c.patient_id,
+		c.initial_encounter_id,
+		c.initial_visit_date, 
+		c.outcome_encounter_id,
+		c.outcome_date, 
+		n.date_of_visit::date,
+		n.tb_xray_screening AS last_tb_xray
+	FROM cohort c
+	LEFT OUTER JOIN ncd_consultations n
+		ON c.patient_id = n.patient_id AND c.initial_visit_date <= n.date_of_visit::date AND COALESCE(c.outcome_date, CURRENT_DATE) >= n.date_of_visit::date
+	WHERE n.tb_xray_screening IS NOT NULL
+	ORDER BY c.patient_id, c.initial_encounter_id, n.patient_id, n.date_of_visit::date DESC),
+-- The TB x-ray screening CTE extracts the last TB x-ray screening reported per cohort enrollment.
+tb_symptom AS (
+	SELECT 
+		DISTINCT ON (c.patient_id, c.initial_encounter_id) c.patient_id,
+		c.initial_encounter_id,
+		c.initial_visit_date, 
+		c.outcome_encounter_id,
+		c.outcome_date, 
+		n.date_of_visit::date,
+		n.tb_symptom_screening AS last_tb_symptom
+	FROM cohort c
+	LEFT OUTER JOIN ncd_consultations n
+		ON c.patient_id = n.patient_id AND c.initial_visit_date <= n.date_of_visit::date AND COALESCE(c.outcome_date, CURRENT_DATE) >= n.date_of_visit::date
+	WHERE n.tb_symptom_screening IS NOT NULL
+	ORDER BY c.patient_id, c.initial_encounter_id, n.patient_id, n.date_of_visit::date DESC),
 -- The last NCD visit CTE extracts the last NCD visit data per cohort enrollment to look at if there are values reported for pregnancy, family planning, hospitalization, missed medication, seizures, or asthma/COPD exacerbations repoted at the last visit. 
 last_ncd_form AS (
 	SELECT 
@@ -385,7 +427,10 @@ SELECT
 	h6m.nb_hospitalised_last_6m,
 	h6m.hospitalised_last_6m,
 	lfe.last_foot_exam_date,
-	asev.asthma_exacerbation_level,
+	ae.last_asthma_exacerbation_level,
+	ce.last_copd_exacerbation_level,
+	tx.last_tb_xray,
+	ts.last_tb_symptom,
 	lbp.last_systolic_first_reading,
 	lbp.last_diastolic_first_reading,
 	CASE WHEN lbp.last_systolic_first_reading IS NOT NULL AND lbp.last_diastolic_first_reading IS NOT NULL THEN CONCAT(lbp.last_systolic_first_reading,'/',lbp.last_diastolic_first_reading) END AS last_bp_first_reading,
@@ -457,8 +502,14 @@ LEFT OUTER JOIN hospitalisation_last_6m h6m
 	ON c.initial_encounter_id = h6m.initial_encounter_id
 LEFT OUTER JOIN last_foot_exam lfe
 	ON c.initial_encounter_id = lfe.initial_encounter_id
-LEFT OUTER JOIN asthma_severity asev
-	ON c.initial_encounter_id = asev.initial_encounter_id
+LEFT OUTER JOIN asthma_exacerbation ae
+	ON c.initial_encounter_id = ae.initial_encounter_id
+LEFT OUTER JOIN copd_exacerbation ce 
+	ON c.initial_encounter_id = ce.initial_encounter_id
+LEFT OUTER JOIN tb_xray tx
+	ON c.initial_encounter_id = tx.initial_encounter_id
+LEFT OUTER JOIN tb_symptom ts
+	ON c.initial_encounter_id = ts.initial_encounter_id
 LEFT OUTER JOIN last_bp lbp
 	ON c.initial_encounter_id = lbp.initial_encounter_id
 LEFT OUTER JOIN last_bmi lbmi
