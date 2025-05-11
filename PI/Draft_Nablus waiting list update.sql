@@ -20,8 +20,8 @@ SELECT
 	WHERE pcia.date >= c.intake_date AND (pcia.date <= c.discharge_date OR c.discharge_date IS NULL)
 	GROUP BY c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date, pcia.date
 	ORDER BY c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date, pcia.date ASC),
-	
 
+-- New CTE added
 	first_psy_fup_assessment AS (
 SELECT 
 		DISTINCT ON (c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date) c.intake_encounter_id,
@@ -303,6 +303,8 @@ SELECT
 		ELSE NULL
 	END	AS enrollment_date,
 	c.discharge_date,
+
+	-- Modification on the waiting list statement to include the first psy assessment and the first psy follow-up forms
 	CASE 
 		WHEN fpia.date IS NOT NULL AND pcfp.date IS NOT NULL AND fcia.date IS NULL AND c.discharge_date IS NULL THEN 'waiting list'
 		WHEN (fpia.date IS NOT NULL OR fcia.date IS NOT NULL) AND c.discharge_date IS NULL THEN 'in cohort'
@@ -411,10 +413,9 @@ LEFT OUTER JOIN first_psy_initial_assessment fpia
 	ON c.intake_encounter_id = fpia.intake_encounter_id
 LEFT OUTER JOIN first_clinician_initial_assessment fcia
 	ON c.intake_encounter_id = fcia.intake_encounter_id
-	
+-- New join added
 LEFT OUTER JOIN first_psy_fup_assessment pcfp
 	ON c.intake_encounter_id = pcfp.intake_encounter_id
-
 LEFT OUTER JOIN mental_health_intake mhi
 	ON c.intake_encounter_id = mhi.encounter_id
 LEFT OUTER JOIN last_syndrome_cte lsc 
