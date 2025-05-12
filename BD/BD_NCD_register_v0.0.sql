@@ -492,6 +492,8 @@ SELECT
 	END AS age_group_admission,
 	pdd.gender,
 	pa."patientCity" AS camp_location, 
+	pa."patientDistrict" AS block,
+	pa."Subblock" AS subblock, 
 	pa."Legal_status",
 	pa."Civil_status",
 	pa."Education_level",
