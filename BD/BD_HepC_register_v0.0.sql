@@ -66,23 +66,23 @@ first_missed_appointment AS (
 		WHERE pa.appointment_start_time > lca.appointment_start_time AND pa.appointment_status = 'Missed') foo
 	WHERE rn = 1),
 last_form AS (
-	SELECT initial_encounter_id, last_form_date, last_form_type 
+	SELECT initial_encounter_id, last_form_date, last_form_type, last_login_location, last_form_location, last_form
 	FROM (
 		SELECT 
 			c.patient_id,
 			c.initial_encounter_id,
-			nvsl.date AS last_form_date,
-			nvsl.last_form_type AS last_form_type,
-			ROW_NUMBER() OVER (PARTITION BY nvsl.patient_id ORDER BY nvsl.date DESC) AS rn
+			hcvl.date AS last_form_date,
+			hcvl.visit_type AS last_form_type,
+			hcvl.login_location AS last_login_location,
+			hcvl.form_location AS last_form_location,
+			hcvl.form_field_path AS last_form,
+			ROW_NUMBER() OVER (PARTITION BY hcvl.patient_id ORDER BY hcvl.date DESC, CASE WHEN hcvl.form_field_path = 'Hepatitis C' THEN 1 WHEN hcvl.form_field_path = 'Vitals and Laboratory Information' THEN 2 ELSE 3 END) AS rn
 		FROM cohort c
 		LEFT OUTER JOIN (
-			SELECT 
-				patient_id, COALESCE(discharge_date, date) AS date, visit_type AS last_form_type 
-			FROM hepatitis_c 
-			UNION 
-			SELECT patient_id, date, form_field_path AS last_form_type
-			FROM vitals_and_laboratory_information) nvsl
-			ON c.patient_id = nvsl.patient_id AND c.initial_visit_date <= nvsl.date::date AND c.end_date >= nvsl.date::date) foo
+			SELECT patient_id, COALESCE(discharge_date, date) AS date, location_name AS login_location, visit_location AS form_location, visit_type, form_field_path FROM hepatitis_c
+			UNION
+			SELECT patient_id, COALESCE(date, date_of_sample_collection) AS date, location_name AS login_location, NULL AS form_location, visit_type, form_field_path FROM vitals_and_laboratory_information) hcvl
+			ON c.patient_id = hcvl.patient_id AND c.initial_visit_date <= hcvl.date::date AND c.end_date >= hcvl.date::date) foo
 	WHERE rn = 1),
 last_visit AS (
 	SELECT
@@ -197,21 +197,7 @@ last_hiv AS (
 		LEFT OUTER JOIN vitals_and_laboratory_information vli
 			ON c.patient_id = vli.patient_id AND c.initial_visit_date <= COALESCE(vli.date_of_sample_collection::date, vli.date::date) AND c.end_date >= COALESCE(vli.date_of_sample_collection::date, vli.date::date)
 		WHERE COALESCE(vli.date_of_sample_collection::date, vli.date::date) IS NOT NULL AND vli.hiv_test IS NOT NULL) foo
-	WHERE rn = 1),
--- The last visit location CTE finds the last visit location reported in Hepatitis C forms.
-last_form_location AS (	
-	SELECT 
-		DISTINCT ON (c.patient_id, c.initial_encounter_id, c.initial_visit_date, c.end_date) c.initial_encounter_id,
-		nvsl.date AS last_form_date,
-		nvsl.visit_location AS last_form_location
-	FROM cohort c
-	LEFT OUTER JOIN (SELECT 
-			patient_id, date, visit_location FROM hepatitis_c UNION SELECT patient_id, date, location_name AS visit_location 
-		FROM vitals_and_laboratory_information) nvsl
-		ON c.patient_id = nvsl.patient_id AND c.initial_visit_date <= nvsl.date::date AND c.end_date >= nvsl.date::date
-	WHERE nvsl.visit_location IS NOT NULL
-	GROUP BY c.patient_id, c.initial_encounter_id, c.initial_visit_date, c.end_date, nvsl.date, nvsl.visit_location
-	ORDER BY c.patient_id, c.initial_encounter_id, c.initial_visit_date, c.end_date, nvsl.date DESC)
+	WHERE rn = 1)
 -- Main query --
 SELECT
 	pi."Patient_Identifier",
@@ -245,6 +231,7 @@ SELECT
 	END AS age_group_admission,
 	pdd.gender,
 	pa."patientCity" AS camp_location, 
+	pa."patientDistrict" AS block,
 	pa."Subblock" AS subblock,
 	pa."Legal_status",
 	pa."Civil_status",
@@ -258,9 +245,10 @@ SELECT
 	fvl.initial_vl_date,
 	fvl.initial_vl_result,
 	c.initial_visit_location,
-	lfl.last_form_location,
+	lf.last_form_location,
+	lf.last_login_location,
 	lv.last_appointment_location,
-	CASE WHEN lfl.last_form_location IS NOT NULL AND lv.last_appointment_location IS NULL THEN lfl.last_form_location WHEN lfl.last_form_location IS NULL AND lv.last_appointment_location IS NOT NULL THEN lv.last_appointment_location WHEN lfl.last_form_date > lv.last_appointment_date AND lfl.last_form_location IS NOT NULL AND lv.last_appointment_location IS NOT NULL THEN lfl.last_form_location WHEN lfl.last_form_date <= lv.last_appointment_date AND lfl.last_form_location IS NOT NULL AND lv.last_appointment_location IS NOT NULL THEN lv.last_appointment_location ELSE NULL END AS last_visit_location,
+	CASE WHEN lf.last_login_location IS NOT NULL AND lv.last_appointment_location IS NULL THEN lf.last_login_location WHEN lf.last_login_location IS NULL AND lv.last_appointment_location IS NOT NULL THEN lv.last_appointment_location WHEN lf.last_form_date > lv.last_appointment_date AND lf.last_login_location IS NOT NULL AND lv.last_appointment_location IS NOT NULL THEN lf.last_login_location WHEN lf.last_form_date <= lv.last_appointment_date AND lf.last_login_location IS NOT NULL AND lv.last_appointment_location IS NOT NULL THEN lv.last_appointment_location ELSE NULL END AS last_visit_location,
 	lv.last_form_date,
 	lv.last_form_type,	
 	lv.last_appointment_date,
@@ -327,8 +315,8 @@ LEFT OUTER JOIN treatment_order ti
 	ON c.initial_encounter_id = ti.initial_encounter_id AND treatment_order = 1
 LEFT OUTER JOIN treatment_secondary ts
 	ON c.initial_encounter_id = ts.initial_encounter_id
-LEFT OUTER JOIN last_form_location lfl
-	ON c.initial_encounter_id = lfl.initial_encounter_id
+LEFT OUTER JOIN last_form lf
+	ON c.initial_encounter_id = lf.initial_encounter_id
 LEFT OUTER JOIN treatment_failure tf
 	ON c.initial_encounter_id = tf.initial_encounter_id
 LEFT OUTER JOIN last_discharge ld 
