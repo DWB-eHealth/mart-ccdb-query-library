@@ -70,9 +70,9 @@ SELECT
 		ELSE NULL
 	END AS age_group_current,
 	pdd.gender,
-	pad.state_province AS governorate, 
-	pad.city_village AS community_village,
-	pad.address2 AS area,
+	pa."patientCity" AS camp_location, 
+	pa."patientDistrict" AS block,
+	pa."Subblock" AS subblock,
 	cc.date::date AS visit_date,
 	cc.visit_location,
 	cc.intervention_setting,
@@ -87,5 +87,5 @@ LEFT OUTER JOIN patient_identifier pi
 	ON cc.patient_id = pi.patient_id
 LEFT OUTER JOIN person_details_default pdd 
 	ON cc.patient_id = pdd.person_id
-LEFT OUTER JOIN person_address_default pad
-	ON c.patient_id = pad.person_id;
+LEFT OUTER JOIN person_attributes pa
+	ON c.patient_id = pa.person_id;
