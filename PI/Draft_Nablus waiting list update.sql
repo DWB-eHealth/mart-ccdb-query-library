@@ -304,12 +304,29 @@ SELECT
 	END	AS enrollment_date,
 	c.discharge_date,
 
-	-- Modification on the waiting list statement to include the first psy assessment and the first psy follow-up forms
-	CASE 
-		WHEN fpia.date IS NOT NULL AND pcfp.date IS NOT NULL AND fcia.date IS NULL AND c.discharge_date IS NULL THEN 'waiting list'
-		WHEN (fpia.date IS NOT NULL OR fcia.date IS NOT NULL) AND c.discharge_date IS NULL THEN 'in cohort'
-		WHEN (fpia.date IS NOT NULL OR fcia.date IS NOT NULL) AND c.discharge_date IS NOT NULL THEN 'discharge'
-	END AS status,
+	-- Modification on the waiting list statement to include the patients with only one psy assessment and one psy follow-up forms
+CASE 
+  WHEN fpia.date IS NOT NULL AND pcfp.date IS NOT NULL AND fcia.date IS NULL AND c.discharge_date IS NULL
+    AND NOT EXISTS (SELECT 1
+      FROM psy_counselors_initial_assessment pcia2
+      WHERE pcia2.patient_id = c.patient_id
+        AND pcia2.date >= c.intake_date
+        AND (pcia2.date <= c.discharge_date OR c.discharge_date IS NULL)
+        AND pcia2.date::date <> fpia.date::date)
+    AND NOT EXISTS (SELECT 1
+      FROM psy_counselors_follow_up pcfp2
+      WHERE pcfp2.patient_id = c.patient_id
+        AND pcfp2.date >= c.intake_date
+        AND (pcfp2.date <= c.discharge_date OR c.discharge_date IS NULL)
+        AND pcfp2.date::date <> pcfp.date::date)
+  THEN 'waiting list'
+WHEN (fpia.date IS NOT NULL OR fcia.date IS NOT NULL)
+    AND c.discharge_date IS NULL
+  THEN 'in cohort'
+WHEN (fpia.date IS NOT NULL OR fcia.date IS NOT NULL)
+    AND c.discharge_date IS NOT NULL
+  THEN 'discharge'
+END AS status,
 	c.readmission,
 	mhi.visit_location AS entry_visit_location,
 	CASE 
