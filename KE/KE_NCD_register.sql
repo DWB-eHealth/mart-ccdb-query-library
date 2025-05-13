@@ -9,7 +9,7 @@ cohort AS (
 	FROM initial i
 	LEFT JOIN (SELECT patient_id, encounter_id, date_of_visit::date AS outcome_date2, patient_outcome_at_end_of_msf_care FROM ncd_consultations WHERE visit_type = 'Patient outcome') d 
 		ON i.patient_id = d.patient_id AND (d.outcome_date2 IS NULL OR (d.outcome_date2 >= i.initial_visit_date AND (d.outcome_date2 < i.next_initial_visit_date OR i.next_initial_visit_date IS NULL)))),
--- The NCD diagnosis CTEs extract all NCD diagnoses for patients reported between their initial visit and discharge visit. Diagnoses are only reported once. For specific disease groups, the second CTE extracts only the last reported diagnosis among the groups. These groups include types of diabetes, types of epilespy, and hyper-/hypothyroidism. The final CTE pivotes the diagnoses horizontally.
+-- The NCD diagnosis CTEs extract all NCD diagnoses for patients reported between their initial visit and discharge visit. Diagnoses are only reported once. For specific disease groups, the second CTE extracts only the last reported diagnosis among the groups. These groups include types of diabetes, types of epilespy, and hypertension stages. The next CTE pivotes the diagnoses horizontally. The final CTE extracts a list of all diagnoses reported for each patient.
 cohort_diagnosis AS (
 	SELECT
 		c.patient_id, c.initial_encounter_id, COALESCE(d.date_of_diagnosis, n.date_of_visit) AS date_of_diagnosis, d.ncd_cohort_diagnosis AS diagnosis
@@ -56,11 +56,58 @@ ncd_diagnosis_list AS (
 	SELECT initial_encounter_id, STRING_AGG(diagnosis, ', ') AS diagnosis_list
 	FROM cohort_diagnosis_last
 	GROUP BY initial_encounter_id),
-
--- -- add and pivot complications with date reported. What if one complication is reported more than once? Which complications have an expiration date?
-
--- -- add and pivot other diagnosis 
-
+-- The other diagnosis CTE extract all other diagnoses for patients reported between their initial visit and discharge visit and pivots the data horizontally. For all other diagnosis reported, the last date reported is presented in the pivoted data.
+other_diagnosis_pivot AS (
+	SELECT 
+		DISTINCT ON (initial_encounter_id, patient_id) initial_encounter_id, 
+		patient_id,
+		MAX (CASE WHEN other_diagnosis = 'Tuberculosis' THEN date_of_other_diagnosis ELSE NULL END) AS tuberculosis,
+		MAX (CASE WHEN other_diagnosis = 'Hyperthyroidism' THEN date_of_other_diagnosis ELSE NULL END) AS hyperthyroidism,
+		MAX (CASE WHEN other_diagnosis = 'Hypothyroidism' THEN date_of_other_diagnosis ELSE NULL END) AS hypothyroidism,
+		MAX (CASE WHEN other_diagnosis = 'Arthritis' THEN date_of_other_diagnosis ELSE NULL END) AS arthritis,
+		MAX (CASE WHEN other_diagnosis = 'Liver cirrhosis' THEN date_of_other_diagnosis ELSE NULL END) AS liver_cirrhosis,
+		MAX (CASE WHEN other_diagnosis LIKE 'Parkinson' THEN date_of_other_diagnosis ELSE NULL END) AS parkinsons_disease,
+		MAX (CASE WHEN other_diagnosis = 'Neoplasm/Cancer' THEN date_of_other_diagnosis ELSE NULL END) AS neoplasm_cancer,
+		MAX (CASE WHEN other_diagnosis = 'Benign Prostatic Hyperplasia (BPH)' THEN date_of_other_diagnosis ELSE NULL END) AS bph,
+		MAX (CASE WHEN other_diagnosis = 'Malaria' THEN date_of_other_diagnosis ELSE NULL END) AS malaria,
+		MAX (CASE WHEN other_diagnosis = 'Other' THEN date_of_other_diagnosis ELSE NULL END) AS other_diagnosis
+	FROM (
+		SELECT
+			c.patient_id, c.initial_encounter_id, COALESCE(d.date_of_other_diagnosis, n.date_of_visit) AS date_of_other_diagnosis, d.other_diagnosis
+		FROM ncd_consultations_other_diagnosis d 
+		LEFT JOIN ncd_consultations n USING(encounter_id)
+		LEFT JOIN cohort c ON d.patient_id = c.patient_id AND c.initial_visit_date <= n.date_of_visit AND COALESCE(c.outcome_date::date, CURRENT_DATE) >= n.date_of_visit) foo
+	GROUP BY initial_encounter_id, patient_id),
+-- The complication CTE extract all complications for patients reported between their initial visit and discharge visit and pivots the data horizontally. For all complications reported, the last date reported is presented in the pivoted data.
+complication_pivot AS (
+	SELECT 
+		DISTINCT ON (initial_encounter_id, patient_id) initial_encounter_id, 
+		patient_id,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Heart failure' THEN date_of_visit ELSE NULL END) AS heart_failure,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Renal failure' THEN date_of_visit ELSE NULL END) AS renal_failure,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Peripheral Vascular Disease' THEN date_of_visit ELSE NULL END) AS peripheral_vascular_disease,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Peripheral Neuropathy' THEN date_of_visit ELSE NULL END) AS peripheral_neuropathy,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Visual Impairment' THEN date_of_visit ELSE NULL END) AS visual_impairment,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Foot Ulcers/deformities' THEN date_of_visit ELSE NULL END) AS foot_ulcers_deformities,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Erectile dysfunction' THEN date_of_visit ELSE NULL END) AS erectile_dysfunction_priapism,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Stroke' THEN date_of_visit ELSE NULL END) AS stroke,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Vasoocclusive pain crisis' THEN date_of_visit ELSE NULL END) AS vasoocclusive_pain_crisis,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Infection' THEN date_of_visit ELSE NULL END) AS infection,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Acute chest syndrome' THEN date_of_visit ELSE NULL END) AS acute_chest_syndrome,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Splenic sequestration' THEN date_of_visit ELSE NULL END) AS splenic_sequestration,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Other acute anemia' THEN date_of_visit ELSE NULL END) AS other_acute_anemia,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Osteomyelitis' THEN date_of_visit ELSE NULL END) AS osteomyelitis,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Dactylitis' THEN date_of_visit ELSE NULL END) AS dactylitis,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis = 'Other' THEN date_of_visit ELSE NULL END) AS other_complication,
+		MAX (CASE WHEN complications_related_to_htn_dm_or_sc_diagnosis IS NOT NULL THEN date_of_visit ELSE NULL END) AS last_complication_date
+	FROM (
+		SELECT
+			c.patient_id, c.initial_encounter_id, n.date_of_visit, comp.complications_related_to_htn_dm_or_sc_diagnosis
+		FROM ncd_consultations_complications_related_to_htn_dm_sc comp 
+		LEFT JOIN ncd_consultations n USING(encounter_id)
+		LEFT JOIN cohort c 
+			ON comp.patient_id = c.patient_id AND c.initial_visit_date <= n.date_of_visit AND COALESCE(c.outcome_date::date, CURRENT_DATE) >= n.date_of_visit) foo
+	GROUP BY initial_encounter_id, patient_id),
 -- The risk factor CTEs pivot risk factor data horizontally from the NCD form. Only the last risk factors are reported per cohort enrollment are present. 
 current_lifestyle_pivot AS (
 	SELECT 
@@ -186,6 +233,7 @@ last_ncd_form AS (
 		c.initial_visit_date, 
 		c.outcome_encounter_id,
 		c.outcome_date, 
+		n.encounter_id,
 		n.date_of_visit::date AS last_ncd_form_date,
 		DATE_PART('day',(now())-(n.date_of_visit::timestamp))::int AS days_since_last_visit,
 		n.visit_type AS last_ncd_form_type,
@@ -204,10 +252,25 @@ last_ncd_form AS (
 	LEFT OUTER JOIN ncd_consultations n
 		ON c.patient_id = n.patient_id AND c.initial_visit_date <= n.date_of_visit::date AND COALESCE(c.outcome_date, CURRENT_DATE) >= n.date_of_visit::date
 	ORDER BY c.patient_id, c.initial_encounter_id, n.patient_id, n.date_of_visit::date DESC),
-
--- -- pivot and add reason for unscheduled visit
-
--- The last BP CTE extracts the last complete blood pressure measurements reported per cohort enrollment. Uses date reported on form. If no date is present, uses date of sample collection. If neither date or date of sample collection are present, results are not considered. 
+-- THe reason unscheduled CTE pivots the reason for unscheduled visit from the last NCD form.
+reason_unscheduled AS (
+	SELECT
+		lcf.initial_encounter_id,
+		lcf.patient_id,
+		CASE WHEN ruv.reason_for_unscheduled_visit = 'Medical attention' THEN 'Yes' ELSE NULL END AS medical_attention,
+		CASE WHEN ruv.reason_for_unscheduled_visit = 'Forgot' THEN 'Yes' ELSE NULL END AS forgot,
+		CASE WHEN ruv.reason_for_unscheduled_visit = 'Financial Constraints' THEN 'Yes' ELSE NULL END AS financial_constraints,
+		CASE WHEN ruv.reason_for_unscheduled_visit = 'Fear/Anxiety' THEN 'Yes' ELSE NULL END AS fear_anxiety,
+		CASE WHEN ruv.reason_for_unscheduled_visit = 'Family/Personal Issues' THEN 'Yes' ELSE NULL END AS family_personal_issues,
+		CASE WHEN ruv.reason_for_unscheduled_visit = 'Other Obligations' THEN 'Yes' ELSE NULL END AS other_obligations,
+		CASE WHEN ruv.reason_for_unscheduled_visit = 'Stigma' THEN 'Yes' ELSE NULL END AS stigma,
+		CASE WHEN ruv.reason_for_unscheduled_visit = 'Myths and misconceptions' THEN 'Yes' ELSE NULL END AS myths_misconceptions,
+		CASE WHEN ruv.reason_for_unscheduled_visit = 'Alternative treatment options' THEN 'Yes' ELSE NULL END AS alternative_treatment_options,
+		CASE WHEN ruv.reason_for_unscheduled_visit = 'Insecurity' THEN 'Yes' ELSE NULL END AS insecurity,
+		CASE WHEN ruv.reason_for_unscheduled_visit = 'Unknown' THEN 'Yes' ELSE NULL END AS unknown
+	FROM last_ncd_form lcf
+	LEFT OUTER JOIN reason_for_unscheduled_visit ruv USING(encounter_id)),
+-- The last BP CTE extracts the last complete blood pressure measurements reported per cohort enrollment. Uses date reported on form. If no date is present, uses date of sample collection. If neither date or date of sample collection are present, results are not considered. The table considers both BP readings and takes the lowest of the two readings. The logic for the lowest reading, first considers the systolic reading and then if the systolic is the same between the two readings, considers the diastolic reading.
 last_bp AS (
 	SELECT 
 		DISTINCT ON (c.patient_id, c.initial_encounter_id) c.patient_id,
@@ -344,8 +407,6 @@ last_alat AS (
 		ON c.patient_id = vli.patient_id AND c.initial_visit_date <= vli.date_of_sample_collection AND COALESCE(c.outcome_date, CURRENT_DATE) >= vli.date_of_sample_collection
 	WHERE vli.date_of_sample_collection IS NOT NULL AND vli.alat IS NOT NULL
 	ORDER BY c.patient_id, c.initial_encounter_id, vli.patient_id, vli.date_of_sample_collection DESC),
-
-
 -- The last HIV test CTE extracts the last HIV test result reported per cohort enrollment. Result is either from the NCD consultation form or the Vitals and lab form, which ever test is reported most recently. In the NCD consultation form, the HIV test result and HIV test result date (or visit date is test result date is incomplete) need to both be completed. In the Vitals and Lab form, the HIV test result and HIV test date both need to be complted.
 last_hiv AS (
 	SELECT 
@@ -417,6 +478,17 @@ SELECT
 	lnf.last_dsdm_group,
 	lnf.last_dsdm_visit_status,
 	lnf.last_visit_unscheduled,
+	ru.medical_attention,
+	ru.forgot,
+	ru.financial_constraints,
+	ru.fear_anxiety,
+	ru.family_personal_issues,
+	ru.other_obligations,
+	ru.stigma,
+	ru.myths_misconceptions,
+	ru.alternative_treatment_options,
+	ru.insecurity,
+	ru.unknown AS unscheduled_reason_unknown,
 	lnf.last_stability,
 	c.outcome_date,
 	c.patient_outcome,
@@ -475,6 +547,33 @@ SELECT
 	ndx.generalised_epilepsy,
 	ndx.unclassified_epilepsy,
 	ndl.diagnosis_list,
+	odp.tuberculosis,
+	odp.hyperthyroidism,
+	odp.hypothyroidism,
+	odp.arthritis,
+	odp.liver_cirrhosis,
+	odp.parkinsons_disease,
+	odp.neoplasm_cancer,
+	odp.bph,
+	odp.malaria,
+	odp.other_diagnosis,
+	cp.heart_failure,
+	cp.renal_failure,
+	cp.peripheral_vascular_disease,
+	cp.peripheral_neuropathy,
+	cp.visual_impairment,
+	cp.foot_ulcers_deformities,
+	cp.erectile_dysfunction_priapism,
+	cp.stroke,
+	cp.vasoocclusive_pain_crisis,
+	cp.infection,
+	cp.acute_chest_syndrome,
+	cp.splenic_sequestration,
+	cp.other_acute_anemia,
+	cp.osteomyelitis,
+	cp.dactylitis,
+	cp.other_complication,
+	cp.last_complication_date,
 	lrf.tobacco_use,
 	lrf.alcohol_use,
 	lrf.adequate_physical_activity,
@@ -494,10 +593,16 @@ LEFT OUTER JOIN ncd_diagnosis_pivot ndx
 	ON c.initial_encounter_id = ndx.initial_encounter_id
 LEFT OUTER JOIN ncd_diagnosis_list ndl
 	ON c.initial_encounter_id = ndl.initial_encounter_id
+LEFT OUTER JOIN other_diagnosis_pivot odp 
+	ON c.initial_encounter_id = odp.initial_encounter_id
+LEFT OUTER JOIN complication_pivot cp 
+	ON c.initial_encounter_id = cp.initial_encounter_id
 LEFT OUTER JOIN last_current_lifestyle lrf
 	ON c.initial_encounter_id = lrf.initial_encounter_id
 LEFT OUTER JOIN last_ncd_form lnf
 	ON c.initial_encounter_id = lnf.initial_encounter_id
+LEFT OUTER JOIN reason_unscheduled ru
+	ON c.initial_encounter_id = ru.initial_encounter_id
 LEFT OUTER JOIN hospitalisation_last_6m h6m
 	ON c.initial_encounter_id = h6m.initial_encounter_id
 LEFT OUTER JOIN last_foot_exam lfe
