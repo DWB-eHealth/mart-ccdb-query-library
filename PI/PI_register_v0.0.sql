@@ -20,6 +20,19 @@ SELECT
 	WHERE pcia.date >= c.intake_date AND (pcia.date <= c.discharge_date OR c.discharge_date IS NULL)
 	GROUP BY c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date, pcia.date
 	ORDER BY c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date, pcia.date ASC),
+
+-- New CTE added
+	first_psy_fup_assessment AS (
+SELECT 
+		DISTINCT ON (c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date) c.intake_encounter_id,
+		pcfp.date::date
+	FROM cohort c
+	LEFT OUTER JOIN psy_counselors_follow_up pcfp
+		ON c.patient_id = pcfp.patient_id
+	WHERE pcfp.date >= c.intake_date AND (pcfp.date <= c.discharge_date OR c.discharge_date IS NULL)
+	GROUP BY c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date, pcfp.date
+	ORDER BY c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date, pcfp.date ASC),
+
 -- The first clinician initial assessment table extracts the date from the first clinician initial assesment. If multiple clinician initial assessments are completed then the first is used. This table is used in case there is no psy initial assessment date provided. 
 first_clinician_initial_assessment AS (
 SELECT 
@@ -290,11 +303,30 @@ SELECT
 		ELSE NULL
 	END	AS enrollment_date,
 	c.discharge_date,
-	CASE 
-		WHEN fpia.date IS NULL AND fcia.date IS NULL AND c.discharge_date IS NULL THEN 'waiting list'
-		WHEN (fpia.date IS NOT NULL OR fcia.date IS NOT NULL) AND c.discharge_date IS NULL THEN 'in cohort'
-		WHEN (fpia.date IS NOT NULL OR fcia.date IS NOT NULL) AND c.discharge_date IS NOT NULL THEN 'discharge'
-	END AS status,
+
+	-- Modification on the waiting list statement to include the patients with only one psy assessment and one psy follow-up forms
+CASE 
+  WHEN fpia.date IS NOT NULL AND pcfp.date IS NOT NULL AND fcia.date IS NULL AND c.discharge_date IS NULL
+    AND NOT EXISTS (SELECT 1
+      FROM psy_counselors_initial_assessment pcia2
+      WHERE pcia2.patient_id = c.patient_id
+        AND pcia2.date >= c.intake_date
+        AND (pcia2.date <= c.discharge_date OR c.discharge_date IS NULL)
+        AND pcia2.date::date <> fpia.date::date)
+    AND NOT EXISTS (SELECT 1
+      FROM psy_counselors_follow_up pcfp2
+      WHERE pcfp2.patient_id = c.patient_id
+        AND pcfp2.date >= c.intake_date
+        AND (pcfp2.date <= c.discharge_date OR c.discharge_date IS NULL)
+        AND pcfp2.date::date <> pcfp.date::date)
+  THEN 'waiting list'
+WHEN (fpia.date IS NOT NULL OR fcia.date IS NOT NULL)
+    AND c.discharge_date IS NULL
+  THEN 'in cohort'
+WHEN (fpia.date IS NOT NULL OR fcia.date IS NOT NULL)
+    AND c.discharge_date IS NOT NULL
+  THEN 'discharge'
+END AS status,
 	c.readmission,
 	mhi.visit_location AS entry_visit_location,
 	CASE 
@@ -398,6 +430,9 @@ LEFT OUTER JOIN first_psy_initial_assessment fpia
 	ON c.intake_encounter_id = fpia.intake_encounter_id
 LEFT OUTER JOIN first_clinician_initial_assessment fcia
 	ON c.intake_encounter_id = fcia.intake_encounter_id
+-- New join added
+LEFT OUTER JOIN first_psy_fup_assessment pcfp
+	ON c.intake_encounter_id = pcfp.intake_encounter_id
 LEFT OUTER JOIN mental_health_intake mhi
 	ON c.intake_encounter_id = mhi.encounter_id
 LEFT OUTER JOIN last_syndrome_cte lsc 
