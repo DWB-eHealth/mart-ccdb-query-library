@@ -241,7 +241,7 @@ SELECT
 	pa."Living_conditions",
 	c.initial_visit_date AS enrollment_date,
 	c.readmission,
-	CASE WHEN fvl.initial_test_and_treat_pcr = 'Yes' THEN fvl.initial_test_and_treat_pcr ELSE NULL END AS Test_and_Treat, --T&T update
+	CASE WHEN fvl.initial_test_and_treat_pcr = 'Yes' THEN fvl.initial_test_and_treat_pcr ELSE NULL END AS test_and_treat, --T&T update
 	fvl.initial_vl_date,
 	fvl.initial_vl_result,
 	c.initial_visit_location,
