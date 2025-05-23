@@ -17,7 +17,7 @@ dernière_ptpe AS (
 			c.patient_id, 
 			c.encounter_id_inclusion, 
 			ptpe.date AS date_derniere_ptpe,
-			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY ptpe.date DESC) AS rn
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY ptpe.date DESC) AS rn
 		FROM cohorte c
 		LEFT OUTER JOIN ptpe
 			ON c.patient_id = ptpe.patient_id AND c.date_inclusion <= ptpe.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= ptpe.date::date) foo
@@ -180,7 +180,7 @@ dernière_test_vih AS (
 			c.encounter_id_inclusion, 
 			svil.date_test_vih,
 			svil.test_vih, 
-			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY svil.date_test_vih DESC) AS rn
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY svil.date_test_vih DESC) AS rn
 		FROM cohorte c 
 		LEFT OUTER JOIN (
 			SELECT 
@@ -200,24 +200,25 @@ dernière_cd4 AS (
 			c.encounter_id_inclusion,  
 			svil.date_cd4, 
 			svil.résultat_brut_cd4,
-			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY svil.date_cd4 DESC) AS rn
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY svil.date_cd4 DESC) AS rn
 		FROM cohorte c 
 		LEFT OUTER JOIN (
 			SELECT 
 				patient_id, 
-				CASE WHEN date_de_prélèvement_cd4 IS NOT NULL THEN date_de_prélèvement_cd4 WHEN date_de_prélèvement_cd4 IS NULL THEN date_de_récéption_des_résultats_cd4 ELSE NULL END AS date_cd4, 
+				COALESCE(date_de_prélèvement_cd4, date_de_récéption_des_résultats_cd4) AS date_cd4, 
 				résultat_brut_cd4
 			FROM signes_vitaux_et_informations_laboratoire_cd4
-			WHERE résultat_brut_cd4 IS NOT NULL AND encounter_id > 14375
+			WHERE encounter_id > 14375
 			UNION
 			SELECT
 				patient_id, 
-			CASE WHEN MAX(date_de_prélèvement_cd4) IS NOT NULL THEN MAX(date_de_prélèvement_cd4) WHEN MAX(date_de_prélèvement_cd4) IS NULL THEN MAX(date_de_récéption_des_résultats_cd4) ELSE NULL END AS date_cd4, 
-			MAX(résultat_brut_cd4)
+				COALESCE(MAX(date_de_prélèvement_cd4), MAX(date_de_récéption_des_résultats_cd4)) AS date_cd4, 
+				MAX(résultat_brut_cd4::int)
 			FROM signes_vitaux_et_informations_laboratoire_cd4
 			WHERE encounter_id <= 14375
 			GROUP BY encounter_id, patient_id) svil 
-			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date_cd4::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_cd4::date) foo
+			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date_cd4::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_cd4::date
+		WHERE svil.date_cd4 IS NOT NULL AND svil.résultat_brut_cd4 IS NOT NULL) foo
 	WHERE rn = 1),
 -- The last viral load CTE provides the last viral load result and date per patient. Only tests with both a date and result are included. If the prélèvement date is completed, then this data is reported. If no pélèvement date is completed, then the récéption date is reported. 
 dernière_charge_virale_vih AS (
@@ -228,24 +229,25 @@ dernière_charge_virale_vih AS (
 			c.encounter_id_inclusion, 
 			svil.date_charge_virale_vih, 
 			svil.résultat_brut_charge_virale_vih,
-			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY svil.date_charge_virale_vih DESC) AS rn
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY svil.date_charge_virale_vih DESC) AS rn
 		FROM cohorte c 
 		LEFT OUTER JOIN (
 			SELECT 
 				patient_id, 
-				CASE WHEN date_de_prélèvement_charge_virale_vih IS NOT NULL THEN date_de_prélèvement_charge_virale_vih WHEN date_de_prélèvement_charge_virale_vih IS NULL THEN date_de_réception_des_résultats_charge_virale_vih ELSE NULL END AS date_charge_virale_vih, 
+				COALESCE(date_de_prélèvement_charge_virale_vih, date_de_réception_des_résultats_charge_virale_vih) AS date_charge_virale_vih, 
 				résultat_brut_charge_virale_vih
 			FROM signes_vitaux_et_informations_laboratoire_charge_virale_vih
-			WHERE résultat_brut_charge_virale_vih IS NOT NULL AND encounter_id > 14371
+			WHERE encounter_id > 14371
 			UNION
-			SELECT
-				patient_id, 
-				CASE WHEN MAX(date_de_prélèvement_charge_virale_vih) IS NOT NULL THEN MAX(date_de_prélèvement_charge_virale_vih) WHEN MAX(date_de_prélèvement_charge_virale_vih) IS NULL THEN MAX(date_de_réception_des_résultats_charge_virale_vih) ELSE NULL END AS date_charge_virale_vih, 
-				MAX(résultat_brut_charge_virale_vih) AS résultat_brut_charge_virale_vih
+			SELECT 
+    			patient_id, 
+				COALESCE(MAX(date_de_prélèvement_charge_virale_vih), MAX(date_de_réception_des_résultats_charge_virale_vih)) AS date_charge_virale_vih,
+				MAX(résultat_brut_charge_virale_vih::int) AS résultat_brut_charge_virale_vih
 			FROM signes_vitaux_et_informations_laboratoire_charge_virale_vih
 			WHERE encounter_id <= 14371
 			GROUP BY encounter_id, patient_id) svil 
-			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date_charge_virale_vih::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_charge_virale_vih::date) foo
+			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date_charge_virale_vih::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_charge_virale_vih::date
+		WHERE svil.date_charge_virale_vih IS NOT NULL AND svil.résultat_brut_charge_virale_vih IS NOT NULL) foo
 	WHERE rn = 1),
 -- The last blood pressure CTE extracts the last complete blood pressure measurements reported per cohort enrollment. Only blood pressures with a date, systolic, and diastolic information are reported.
 dernière_pression_artérielle AS (
@@ -257,7 +259,7 @@ dernière_pression_artérielle AS (
 			svil.date AS date_dernière_pression_artérielle,
 			svil.tension_arterielle_systolique AS dernière_pression_artérielle_systolique,
 			svil.tension_arterielle_diastolique AS dernière_pression_artérielle_diastolique, 
-			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY svil.date DESC) AS rn
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY svil.date DESC) AS rn
 		FROM cohorte c
 		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
 			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
@@ -272,7 +274,7 @@ dernière_imc AS (
 			c.encounter_id_inclusion, 
 			svil.date AS date_dernière_imc,
 			svil.indice_de_masse_corporelle AS dernière_imc, 
-			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY svil.date DESC) AS rn
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY svil.date DESC) AS rn
 		FROM cohorte c
 		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
 			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
@@ -287,7 +289,7 @@ dernière_hba1c AS (
 			c.encounter_id_inclusion, 
 			COALESCE(svil.date_de_prélèvement, svil.date) AS date_dernière_hba1c,
 			svil.hba1c AS dernière_hba1c, 
-			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
 		FROM cohorte c
 		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
 			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
@@ -302,7 +304,7 @@ dernière_glycémie AS (
 			c.encounter_id_inclusion, 
 			COALESCE(svil.date_de_prélèvement, svil.date) AS date_dernière_glycémie,
 			svil.glycémie AS dernière_glycémie, 
-			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
 		FROM cohorte c
 		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
 			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
@@ -317,7 +319,7 @@ dernière_protéinurie AS (
 			c.encounter_id_inclusion, 
 			COALESCE(svil.date_de_prélèvement, svil.date) AS date_dernière_protéinurie,
 			svil.protéinurie AS dernière_protéinurie, 
-			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
 		FROM cohorte c
 		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
 			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
@@ -332,7 +334,7 @@ dernière_créatine AS (
 			c.encounter_id_inclusion, 
 			COALESCE(svil.date_de_prélèvement, svil.date) AS date_dernière_créatine,
 			svil.créatine AS dernière_créatine, 
-			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
 		FROM cohorte c
 		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
 			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
@@ -352,7 +354,7 @@ dernière_visite AS (
 			CASE WHEN n.convulsions_depuis_la_derniere_consultation = 'Oui' THEN 'Oui' END AS convulsions_signalée_dernière_visite,
 			CASE WHEN n.exacerbation_par_semaine IS NOT NULL AND n.exacerbation_par_semaine > 0 THEN 'Oui' END AS exacerbation_signalée_dernière_visite,
 			n.exacerbation_par_semaine AS nbr_exacerbation_signalée_dernière_visite,
-			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY n.date DESC) AS rn
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY n.date DESC) AS rn
 		FROM cohorte c
 		LEFT OUTER JOIN mnt_vih_tb n
 			ON c.patient_id = n.patient_id AND c.date_inclusion <= n.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date::date) foo
@@ -366,7 +368,7 @@ dernière_gravité_asthme AS (
 			c.encounter_id_inclusion,
 			n.date::date,
 			n.gravité_de_l_asthme AS dernière_gravité_asthme, 
-			ROW_NUMBER() OVER (PARTITION BY c.patient_id ORDER BY n.date DESC) AS rn
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY n.date DESC) AS rn
 		FROM cohorte c
 		LEFT OUTER JOIN mnt_vih_tb n
 			ON c.patient_id = n.patient_id AND c.date_inclusion <= n.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date::date
