@@ -231,7 +231,27 @@ last_lab_gfr AS (
         l.estimated_glomerular_filtration_rate_result
     FROM "2_lab_and_vital_signs_form" l
     WHERE l.date_of_estimated_glomerular_filtration_rate IS NOT NULL OR l.estimated_glomerular_filtration_rate_result IS NOT NULL
-    ORDER BY l.patient_id, l.date_of_estimated_glomerular_filtration_rate DESC)
+    ORDER BY l.patient_id, l.date_of_estimated_glomerular_filtration_rate DESC),
+
+-- CTE with the last date of PrEP visit card
+last_prep_visit_date AS (
+    SELECT DISTINCT ON (pvc.patient_id)
+pvc.patient_id,
+pvc.prep_visit_date as last_prep_visit_date
+FROM "4_prep_visit_card" pvc
+WHERE pvc.prep_visit_date IS NOT NULL
+    ORDER BY pvc.patient_id, pvc.prep_visit_date DESC),
+    
+-- CTE with the last next appointement date from the PrEP visit card
+last_prep_next_appointement_date AS (
+SELECT DISTINCT ON (pvc.patient_id)
+pvc.patient_id,
+pvc.next_appointement_date AS last_prep_next_appointement_date,
+DATE_PART('day', pvc.next_appointement_date - NOW()) AS days_until_next_prep_appointment
+FROM "4_prep_visit_card" pvc
+WHERE pvc.next_appointement_date IS NOT NULL
+ORDER BY pvc.patient_id, pvc.next_appointement_date DESC)
+
 
 SELECT 
     pi.patient_id, 
@@ -295,7 +315,11 @@ SELECT
     llc.date_of_creatinine_concentration, 
     llc.creatinine_concentration_result,      
     llg.date_of_estimated_glomerular_filtration_rate, 
-    llg.estimated_glomerular_filtration_rate_result        
+    llg.estimated_glomerular_filtration_rate_result,
+    lpvd.last_prep_visit_date,
+    lpnad.last_prep_next_appointement_date,
+   lpnad.days_until_next_prep_appointment
+
 FROM patient_identifier pi
 LEFT OUTER JOIN person_details_default pdd ON pi.patient_id = pdd.person_id
 LEFT OUTER JOIN person_address_default pad ON pi.patient_id = pad.person_id
@@ -315,5 +339,7 @@ LEFT OUTER JOIN last_lab_pregnancy llpt ON pi.patient_id = llpt.patient_id
 LEFT OUTER JOIN last_lab_hpv llhpv ON pi.patient_id = llhpv.patient_id
 LEFT OUTER JOIN last_lab_creat llc ON pi.patient_id = llc.patient_id
 LEFT OUTER JOIN last_lab_gfr llg ON pi.patient_id = llg.patient_id
+LEFT OUTER JOIN last_prep_visit_date lpvd ON pi.patient_id = lpvd.patient_id
+LEFT OUTER JOIN last_prep_next_appointement_date lpnad ON pi.patient_id = lpnad.patient_id
 WHERE pi."Patient_Identifier" IS NOT NULL
 ORDER BY patient_id;
