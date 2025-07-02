@@ -27,7 +27,7 @@ cohort_diagnosis_last AS (
             SELECT
                 cd.*,
                 CASE
-                    WHEN diagnosis IN ('Asthma', 'Chronic obstructive pulmonary disease', 'Sickle cell disease') THEN 'Group1'
+                    WHEN diagnosis IN ('Asthma', 'Chronic obstructive pulmonary disease', 'Sickle Cell Disease') THEN 'Group1'
                     WHEN diagnosis IN ('Diabetes mellitus, type 1', 'Diabetes mellitus, type 2') THEN 'Group2'
                     WHEN diagnosis IN ('Focal epilepsy', 'Generalised epilepsy', 'Unclassified epilepsy') THEN 'Group3'
 					WHEN diagnosis IN ('Hypertension Stage 1', 'Hypertension Stage 2', 'Hypertension Stage 3') THEN 'Group4'
@@ -40,7 +40,7 @@ ncd_diagnosis_pivot AS (
 		DISTINCT ON (initial_encounter_id, patient_id) initial_encounter_id, 
 		patient_id,
 		MAX (CASE WHEN diagnosis = 'Asthma' THEN date_of_diagnosis ELSE NULL END) AS asthma,
-		MAX (CASE WHEN diagnosis = 'Sickle cell disease' THEN date_of_diagnosis ELSE NULL END) AS sickle_cell_disease,
+		MAX (CASE WHEN diagnosis = 'Sickle Cell Disease' THEN date_of_diagnosis ELSE NULL END) AS sickle_cell_disease,
 		MAX (CASE WHEN diagnosis = 'Chronic obstructive pulmonary disease' THEN date_of_diagnosis ELSE NULL END) AS copd,
 		MAX (CASE WHEN diagnosis = 'Diabetes mellitus, type 1' THEN date_of_diagnosis ELSE NULL END) AS diabetes_type1,
 		MAX (CASE WHEN diagnosis = 'Diabetes mellitus, type 2' THEN date_of_diagnosis ELSE NULL END) AS diabetes_type2,
@@ -479,6 +479,7 @@ SELECT
 	lnf.last_dsdm_visit_status,
 	lnf.last_visit_unscheduled,
 	-- last dsdm visit and last non-dsdm visit dates, how long been in dsdm if currently in dsdm without normal/facility care
+	-- add first DSDM to register
 	ru.medical_attention,
 	ru.forgot,
 	ru.financial_constraints,
@@ -496,7 +497,10 @@ SELECT
 	lnf.pregnant_last_visit,
 	lnf.hospitalised_last_visit,
 	lnf.seizures_last_visit,
+	-- last time seizures reported
+	-- add seizure free in the last 2 years (no seizures reported between today and the last 2 years, enrollment date has to be 2+ years ago)
 	lnf.referred_tb_last_visit,
+	-- ^ change referred tb last visit to last referral for TB
 	h6m.nb_hospitalised_last_6m,
 	h6m.hospitalised_last_6m,
 	lfe.last_foot_exam_date,
@@ -505,6 +509,7 @@ SELECT
 	ce.last_copd_exacerbation_level,
 	tx.last_tb_xray,
 	ts.last_tb_symptom,
+	-- add geneX result, add combined column if any TB screening (xray + symptom + genX) >> case([NCD Consultations - Patient → TB Symptom Screening] = "Yes positive", "Yes", [NCD Consultations - Patient → TB Sputum Screening] = "Yes positive", "Yes", [NCD Consultations - Patient → Tb Xray Screening] = "Yes positive", "Yes", [NCD Consultations - Patient → Tb Genexpert Screening] = "Yes positive", "Yes")
 	lbp.last_systolic_first_reading,
 	lbp.last_diastolic_first_reading,
 	CASE WHEN lbp.last_systolic_first_reading IS NOT NULL AND lbp.last_diastolic_first_reading IS NOT NULL THEN CONCAT(lbp.last_systolic_first_reading,'/',lbp.last_diastolic_first_reading) END AS last_bp_first_reading,
@@ -514,7 +519,8 @@ SELECT
 	lbp.last_systolic_lowest,
 	lbp.last_diastolic_lowest,
 	CASE WHEN lbp.last_systolic_lowest IS NOT NULL AND lbp.last_diastolic_lowest IS NOT NULL THEN CONCAT(lbp.last_systolic_lowest,'/',lbp.last_diastolic_lowest) END AS last_bp_lowest,
-	CASE WHEN lbp.last_systolic_lowest <= 130 AND lbp.last_diastolic_lowest <= 90 THEN 'Yes' WHEN lbp.last_systolic_lowest > 130 OR lbp.last_diastolic_lowest > 90 THEN 'No' END AS last_bp_control,
+	CASE WHEN lbp.last_systolic_lowest <= 140 AND lbp.last_diastolic_lowest <= 90 THEN 'Yes' WHEN lbp.last_systolic_lowest > 140 OR lbp.last_diastolic_lowest > 90 THEN 'No' END AS last_bp_control_htn,
+	CASE WHEN lbp.last_systolic_lowest <= 130 AND lbp.last_diastolic_lowest <= 90 THEN 'Yes' WHEN lbp.last_systolic_lowest > 130 OR lbp.last_diastolic_lowest > 90 THEN 'No' END AS last_bp_control_dm,
 	lbp.last_bp_date,
 	lbmi.last_bmi,
 	lbmi.last_bmi_date,
@@ -582,6 +588,7 @@ SELECT
 	lrf.alcohol_use,
 	lrf.adequate_physical_activity,
 	lrf.healthy_diet
+	--add 2 columns for medications (ever prescribed, currently active)
 FROM cohort c
 LEFT OUTER JOIN patient_identifier pi
 	ON c.patient_id = pi.patient_id
