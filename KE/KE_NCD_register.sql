@@ -176,6 +176,12 @@ dsd_status AS (
 				'Community based DSDM'
 			)
 		) AS ever_dsd,
+				BOOL_OR(
+			service_package IN (
+				'Facility based DSDM',
+				'Community based DSDM'
+			)
+		) AS ever_dsdm,
 		BOOL_OR(
 			prev_service_package IN (
 				'Standard of Care',
@@ -190,7 +196,18 @@ dsd_status AS (
 				'Facility based DSDM',
 				'Community based DSDM'
 			)
-		) AS interrupted_dsd
+		) AS interrupted_dsd,
+				BOOL_OR(
+			prev_service_package IN (
+				'Facility based DSDM',
+				'Community based DSDM'
+			)
+			AND service_package = 'Routine Care Visit'
+			AND next_service_package IN (
+				'Facility based DSDM',
+				'Community based DSDM'
+			)
+		) AS interrupted_dsdm
 	FROM
 		visits_ordered
 	GROUP BY
@@ -229,6 +246,68 @@ current_dsd_streak AS (
 		)
 	GROUP BY
 		vo.initial_encounter_id
+),
+-- The current_dsd_streak CTE identifies the last start date for a patient who are recieve the DSD service package.
+current_dsdm_streak AS (
+	SELECT
+		vo.initial_encounter_id,
+		MIN(vo.date_of_visit) AS current_dsdm_start_date
+	FROM
+		visits_ordered vo
+		JOIN dsd_status ds ON vo.initial_encounter_id = ds.initial_encounter_id
+	WHERE
+		vo.service_package IN (
+			'Facility based DSDM',
+			'Community based DSDM'
+		)
+		AND ds.latest_service_package IN (
+			'Facility based DSDM',
+			'Community based DSDM'
+		)
+		AND NOT EXISTS (
+			SELECT
+				1
+			FROM
+				ncd_consultations n
+			WHERE
+				n.patient_id = vo.patient_id
+				AND n.date_of_visit > vo.date_of_visit
+				AND n.type_of_service_package_provided IN ('Routine Care Visit', 'Standard of Care', 'Facility Fast-Track')
+		)
+	GROUP BY
+		vo.initial_encounter_id
+),
+-- The xxx
+first_dsd AS (
+	SELECT
+		initial_encounter_id,
+		date_of_visit AS first_dsd_date,
+		service_package AS first_dsd_service_package,
+		dsdm_group_name_and_number AS first_dsdm_group
+	FROM
+		(
+			SELECT
+				initial_encounter_id,
+				date_of_visit,
+				service_package,
+				dsdm_group_name_and_number,
+				ROW_NUMBER() OVER (
+					PARTITION BY initial_encounter_id
+					ORDER BY
+						date_of_visit
+				) AS rn
+			FROM
+				visits_ordered vo
+			WHERE
+				service_package IN (
+					'Standard of Care',
+					'Facility Fast-Track',
+					'Facility based DSDM',
+					'Community based DSDM'
+				)
+		) first_dsd
+	WHERE
+		rn = 1
 ),
 -- *DISAGNOSIS AND COMPLICATIONS: The NCD diagnosis and compliation CTEs extract and organize diagnosis, other diagnosis, and complication information reported during the patient's enrollment window (defined by the cohort CTE). 
 -- In the cohort_diagnosis CTE, each diagnosis is only counted once per patient and the date for the diagnosis reported is the earliest date that the diagnosis is made. For specific diagnosis groups, only the last reported diagnosis is extraCTEd. These groups are diabetes (includeing Diabetes mellitus, type 1 and Diabetes mellitus, type 2), epilepsy (including Focal epilepsy, Generalised epilepsy, Unclassified epilepsy), and hypertension (including Hypertension Stage 1, Hypertension Stage 2, Hypertension Stage 3).
@@ -527,6 +606,9 @@ complication_pivot AS (
 				JOIN cohort c ON comp.patient_id = c.patient_id
 				AND c.initial_visit_date <= n.date_of_visit
 				AND COALESCE(c.outcome_date :: DATE, CURRENT_DATE) >= n.date_of_visit
+			WHERE
+				comp.complications_related_to_htn_dm_or_sc_diagnosis IS NOT NULL
+				AND comp.complications_related_to_htn_dm_or_sc_diagnosis != 'None'
 		) comp
 	GROUP BY
 		initial_encounter_id,
@@ -537,7 +619,7 @@ complication_list AS (
 	SELECT
 		initial_encounter_id,
 		STRING_AGG(
-			complication,
+			DISTINCT complication,
 			', '
 			ORDER BY
 				complication
@@ -555,6 +637,9 @@ complication_list AS (
 				JOIN cohort c ON comp.patient_id = c.patient_id
 				AND c.initial_visit_date <= n.date_of_visit
 				AND COALESCE(c.outcome_date :: DATE, CURRENT_DATE) >= n.date_of_visit
+			WHERE
+				comp.complications_related_to_htn_dm_or_sc_diagnosis IS NOT NULL
+				AND comp.complications_related_to_htn_dm_or_sc_diagnosis != 'None'
 		) comp
 	GROUP BY
 		initial_encounter_id
@@ -564,7 +649,7 @@ complication_list_baseline AS (
 	SELECT
 		initial_encounter_id,
 		STRING_AGG(
-			complication,
+			DISTINCT complication,
 			', '
 			ORDER BY
 				complication
@@ -584,6 +669,8 @@ complication_list_baseline AS (
 				AND COALESCE(c.outcome_date :: DATE, CURRENT_DATE) >= n.date_of_visit
 			WHERE
 				n.visit_type = 'Initial visit'
+				AND comp.complications_related_to_htn_dm_or_sc_diagnosis IS NOT NULL
+				AND comp.complications_related_to_htn_dm_or_sc_diagnosis != 'None'
 		) comp_bl
 	GROUP BY
 		initial_encounter_id
@@ -777,6 +864,30 @@ tb_screening AS (
 					tb_xray_screening,
 					tb_genexpert_screening
 				) IS NOT NULL
+		) tb
+	WHERE
+		rn = 1
+),
+tb_xray AS (
+	SELECT
+		initial_encounter_id,
+		last_tb_xray_date,
+		last_tb_xray
+	FROM
+		(
+			SELECT
+				initial_encounter_id,
+				date_of_visit AS last_tb_xray_date,
+				tb_xray_screening AS last_tb_xray,
+				ROW_NUMBER() OVER (
+					PARTITION BY initial_encounter_id
+					ORDER BY
+						date_of_visit DESC
+				) AS rn
+			FROM
+				visits_ordered vo
+			WHERE
+				tb_xray_screening IS NOT NULL
 		) tb
 	WHERE
 		rn = 1
@@ -1203,12 +1314,12 @@ medication_list_ongoing AS (
 		initial_encounter_id
 ) -- *Main query* --
 SELECT
-	pi. "Patient_Identifier",
+	pi."Patient_Identifier",
 	c.patient_id,
 	c.initial_encounter_id,
-	pa. "patientFileNumber",
-	pa. "Patient_Unique_ID_CCC_No",
-	pa. "facilityForArt",
+	pa."patientFileNumber",
+	pa."Patient_Unique_ID_CCC_No",
+	pa."facilityForArt",
 	pdd.age AS age_current,
 	CASE
 		WHEN pdd.age :: INT <= 4 THEN '0-4'
@@ -1355,7 +1466,7 @@ SELECT
 	pad.state_province AS sub_county,
 	pad.county_district AS ward,
 	pad.address2 AS village,
-	pa. "Occupation",
+	pa."Occupation",
 	c.initial_visit_date AS enrollment_date,
 	CASE
 		WHEN c.outcome_date IS NULL THEN 'Yes'
@@ -1402,8 +1513,16 @@ SELECT
 	vo.dsdm_visit_status AS last_dsdm_visit_status,
 	cds.current_dsd_start_date AS last_dsd_start_date,
 	(CURRENT_DATE - cds.current_dsd_start_date) AS days_in_current_dsd,
+	fd.first_dsd_date,
+	fd.first_dsd_service_package,
+	fd.first_dsdm_group,
+	(fd.first_dsd_date - c.initial_visit_date) AS days_enrollment_to_dsd,
 	ds.ever_dsd AS ever_in_dsd,
 	ds.interrupted_dsd AS dsd_interruption,
+	cdms.current_dsdm_start_date AS last_dsdm_start_date, 
+	(CURRENT_DATE - cdms.current_dsdm_start_date) AS days_in_current_dsdm,
+	ds.ever_dsdm AS ever_in_dsdm,
+	ds.interrupted_dsdm AS dsdm_interruption,
 	ndx.asthma,
 	ndx.sickle_cell_disease,
 	ndx.copd,
@@ -1424,6 +1543,11 @@ SELECT
 	ndx.focal_epilepsy,
 	ndx.generalised_epilepsy,
 	ndx.unclassified_epilepsy,
+	CASE
+		WHEN ndx.focal_epilepsy IS NOT NULL
+		OR ndx.generalised_epilepsy IS NOT NULL
+		OR ndx.unclassified_epilepsy IS NOT NULL THEN 1
+	END AS epilepsy_any,
 	ndl.diagnosis_list,
 	odl.other_diagnosis_list,
 	cp.last_complication_date,
@@ -1473,12 +1597,14 @@ SELECT
 		) >= '2 years' THEN 'Yes'
 	END AS seizure_free_2_years,
 	tbs.last_tb_screening_date,
-	tbs.last_tb_symptom,
-	tbs.last_tb_sputum,
-	tbs.last_tb_xray,
-	tbs.last_tb_genexpert,
+	tbs.last_tb_symptom AS tb_symptom,
+	tbs.last_tb_sputum AS tb_sputum,
+	tbs.last_tb_xray AS tb_xray,
+	tbs.last_tb_genexpert AS tb_genexpert,
 	tbs.last_tb_screening_positive,
 	tbs.last_tb_referral,
+	tbx.last_tb_xray_date,
+	tbx.last_tb_xray AS last_tb_xray_result,
 	ae.last_asthma_exacerbation_date,
 	ae.last_asthma_exacerbation_level,
 	ce.last_copd_exacerbation_date,
@@ -1596,6 +1722,8 @@ FROM
 	LEFT OUTER JOIN current_lifestyle_list cll ON c.initial_encounter_id = cll.initial_encounter_id
 	LEFT OUTER JOIN dsd_status ds ON c.initial_encounter_id = ds.initial_encounter_id
 	LEFT OUTER JOIN current_dsd_streak cds ON c.initial_encounter_id = cds.initial_encounter_id
+	LEFT OUTER JOIN current_dsdm_streak cdms ON c.initial_encounter_id = cdms.initial_encounter_id
+	LEFT OUTER JOIN first_dsd fd ON c.initial_encounter_id = fd.initial_encounter_id
 	LEFT OUTER JOIN ncd_diagnosis_pivot ndx ON c.initial_encounter_id = ndx.initial_encounter_id
 	LEFT OUTER JOIN ncd_diagnosis_list ndl ON c.initial_encounter_id = ndl.initial_encounter_id
 	LEFT OUTER JOIN other_diagnosis_list odl ON c.initial_encounter_id = odl.initial_encounter_id
@@ -1608,6 +1736,7 @@ FROM
 	LEFT OUTER JOIN last_foot_assessment lfa ON c.initial_encounter_id = lfa.initial_encounter_id
 	LEFT OUTER JOIN last_seizure ls ON c.initial_encounter_id = ls.initial_encounter_id
 	LEFT OUTER JOIN tb_screening tbs ON c.initial_encounter_id = tbs.initial_encounter_id
+	LEFT OUTER JOIN tb_xray tbx ON c.initial_encounter_id = tbx.initial_encounter_id
 	LEFT OUTER JOIN asthma_exacerbation ae ON c.initial_encounter_id = ae.initial_encounter_id
 	LEFT OUTER JOIN copd_exacerbation ce ON c.initial_encounter_id = ce.initial_encounter_id
 	LEFT OUTER JOIN last_bp lbp ON c.initial_encounter_id = lbp.initial_encounter_id
