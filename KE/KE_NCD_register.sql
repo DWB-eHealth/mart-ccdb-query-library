@@ -277,7 +277,7 @@ current_dsdm_streak AS (
 	GROUP BY
 		vo.initial_encounter_id
 ),
--- The xxx
+-- The first_dsd CTE identifies the first DSD enrollment.
 first_dsd AS (
 	SELECT
 		initial_encounter_id,
