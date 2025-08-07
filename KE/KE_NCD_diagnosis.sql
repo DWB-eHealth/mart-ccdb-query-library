@@ -125,32 +125,149 @@ cohort_diagnosis AS (
 		diagnosis
 )
 -- Main query --
-SELECT 
-	pi."Patient_Identifier",
+SELECT
+	pi. "Patient_Identifier",
 	c.patient_id,
 	c.initial_encounter_id,
 	pdd.age AS age_current,
-	CASE 
-		WHEN pdd.age::int <= 4 THEN '0-4'
-		WHEN pdd.age::int >= 5 AND pdd.age::int <= 14 THEN '05-14'
-		WHEN pdd.age::int >= 15 AND pdd.age::int <= 24 THEN '15-24'
-		WHEN pdd.age::int >= 25 AND pdd.age::int <= 34 THEN '25-34'
-		WHEN pdd.age::int >= 35 AND pdd.age::int <= 44 THEN '35-44'
-		WHEN pdd.age::int >= 45 AND pdd.age::int <= 54 THEN '45-54'
-		WHEN pdd.age::int >= 55 AND pdd.age::int <= 64 THEN '55-64'
-		WHEN pdd.age::int >= 65 THEN '65+'
+	CASE
+		WHEN pdd.age :: INT <= 4 THEN '0-4'
+		WHEN pdd.age :: INT >= 5
+		AND pdd.age :: INT <= 14 THEN '05-14'
+		WHEN pdd.age :: INT >= 15
+		AND pdd.age :: INT <= 24 THEN '15-24'
+		WHEN pdd.age :: INT >= 25
+		AND pdd.age :: INT <= 34 THEN '25-34'
+		WHEN pdd.age :: INT >= 35
+		AND pdd.age :: INT <= 44 THEN '35-44'
+		WHEN pdd.age :: INT >= 45
+		AND pdd.age :: INT <= 54 THEN '45-54'
+		WHEN pdd.age :: INT >= 55
+		AND pdd.age :: INT <= 64 THEN '55-64'
+		WHEN pdd.age :: INT >= 65 THEN '65+'
 		ELSE NULL
 	END AS age_group_current,
-	EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) AS age_admission,
-	CASE 
-		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int <= 4 THEN '0-4'
-		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 5 AND EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) <= 14 THEN '05-14'
-		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 15 AND EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) <= 24 THEN '15-24'
-		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 25 AND EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) <= 34 THEN '25-34'
-		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 35 AND EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) <= 44 THEN '35-44'
-		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 45 AND EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) <= 54 THEN '45-54'
-		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 55 AND EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) <= 64 THEN '55-64'
-		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 65 THEN '65+'
+	EXTRACT(
+		YEAR
+		FROM
+			age(
+				ped.encounter_datetime,
+				TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+			)
+	) AS age_admission,
+	CASE
+		WHEN EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) :: INT <= 4 THEN '0-4'
+		WHEN EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) :: INT >= 5
+		AND EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) <= 14 THEN '05-14'
+		WHEN EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) :: INT >= 15
+		AND EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) <= 24 THEN '15-24'
+		WHEN EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) :: INT >= 25
+		AND EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) <= 34 THEN '25-34'
+		WHEN EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) :: INT >= 35
+		AND EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) <= 44 THEN '35-44'
+		WHEN EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) :: INT >= 45
+		AND EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) <= 54 THEN '45-54'
+		WHEN EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) :: INT >= 55
+		AND EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) <= 64 THEN '55-64'
+		WHEN EXTRACT(
+			YEAR
+			FROM
+				age(
+					ped.encounter_datetime,
+					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
+				)
+		) :: INT >= 65 THEN '65+'
 		ELSE NULL
 	END AS age_group_admission,
 	pdd.gender,
@@ -159,11 +276,31 @@ SELECT
 	pad.county_district AS ward,
 	pad.address2 AS village,
 	c.initial_visit_date AS enrollment_date,
-	CASE WHEN c.outcome_date IS NULL THEN 'Yes' END AS in_cohort,
+	CASE
+		WHEN C .outcome_date IS NULL THEN 'Yes'
+	END AS in_cohort,
 	c.outcome_date,
 	c.patient_outcome,
-	cd.diagnosis
-FROM cohort_diagnosis cd
+	cd.diagnosis,
+	CASE
+		WHEN cd.diagnosis IN (
+			'Diabetes mellitus, type 1',
+			'Diabetes mellitus, type 2'
+		) THEN 'Diabetes'
+		WHEN cd.diagnosis IN (
+			'Focal epilepsy',
+			'Generalised epilepsy',
+			'Unclassified epilepsy'
+		) THEN 'Epilepsy'
+		WHEN cd.diagnosis IN (
+			'Hypertension Stage 1',
+			'Hypertension Stage 2',
+			'Hypertension Stage 3'
+		) THEN 'Hypertension'
+		ELSE cd.diagnosis
+	END AS diagnosis_simplified
+FROM
+	cohort_diagnosis cd
 LEFT OUTER JOIN cohort c
 	ON cd.initial_encounter_id = c.initial_encounter_id
 LEFT OUTER JOIN patient_identifier pi
