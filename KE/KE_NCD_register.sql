@@ -107,7 +107,15 @@ visits_ordered AS (
 		ROW_NUMBER() OVER (
 			PARTITION BY c.initial_encounter_id
 			ORDER BY
-				n.date_of_visit DESC
+				n.date_of_visit DESC,
+				CASE
+					WHEN n.type_of_service_package_provided = 'Routine Care Visit' THEN 1
+					WHEN n.type_of_service_package_provided = 'Standard of Care' THEN 2
+					WHEN n.type_of_service_package_provided = 'Facility Fast-Track' THEN 3
+					WHEN n.type_of_service_package_provided = 'Facility based DSDM' THEN 4
+					WHEN n.type_of_service_package_provided = 'Community based DSDM' THEN 5
+					ELSE 6
+				END
 		) AS rn_desc,
 		ROW_NUMBER() OVER (
 			PARTITION BY c.initial_encounter_id
@@ -176,37 +184,27 @@ dsd_status AS (
 				'Community based DSDM'
 			)
 		) AS ever_dsd,
-				BOOL_OR(
+		BOOL_OR(
 			service_package IN (
 				'Facility based DSDM',
 				'Community based DSDM'
 			)
 		) AS ever_dsdm,
 		BOOL_OR(
-			prev_service_package IN (
-				'Standard of Care',
-				'Facility Fast-Track',
-				'Facility based DSDM',
-				'Community based DSDM'
-			)
-			AND service_package = 'Routine Care Visit'
-			AND next_service_package IN (
-				'Standard of Care',
-				'Facility Fast-Track',
-				'Facility based DSDM',
-				'Community based DSDM'
-			)
+			service_package = 'Routine Care Visit'
+			AND prev_service_package IN (
+					'Standard of Care',
+					'Facility Fast-Track',
+					'Facility based DSDM',
+					'Community based DSDM'
+				)
 		) AS interrupted_dsd,
-				BOOL_OR(
-			prev_service_package IN (
-				'Facility based DSDM',
-				'Community based DSDM'
-			)
-			AND service_package = 'Routine Care Visit'
-			AND next_service_package IN (
-				'Facility based DSDM',
-				'Community based DSDM'
-			)
+		BOOL_OR(
+			service_package = 'Routine Care Visit'
+			AND prev_service_package IN (
+					'Facility based DSDM',
+					'Community based DSDM'
+				)
 		) AS interrupted_dsdm
 	FROM
 		visits_ordered
@@ -215,9 +213,18 @@ dsd_status AS (
 ),
 -- The current_dsd_streak CTE identifies the last start date for a patient who are recieve the DSD service package.
 current_dsd_streak AS (
+	SELECT 
+	    d.initial_encounter_id,
+	    d.current_dsd_start_date,
+	    d.last_dsd_date,
+	    vo.service_package AS last_dsd_service_package,
+		vo.dsdm_group_name_and_number AS last_dsdm_group,
+		vo.dsdm_visit_status AS last_dsdm_status
+	FROM (
 	SELECT
 		vo.initial_encounter_id,
-		MIN(vo.date_of_visit) AS current_dsd_start_date
+		MIN(vo.date_of_visit) AS current_dsd_start_date,
+		MAX(vo.date_of_visit) AS last_dsd_date
 	FROM
 		visits_ordered vo
 		JOIN dsd_status ds ON vo.initial_encounter_id = ds.initial_encounter_id
@@ -245,9 +252,17 @@ current_dsd_streak AS (
 				AND n.type_of_service_package_provided = 'Routine Care Visit'
 		)
 	GROUP BY
-		vo.initial_encounter_id
+		vo.initial_encounter_id) d
+	LEFT JOIN visits_ordered vo 
+	ON d.initial_encounter_id = vo.initial_encounter_id AND d.last_dsd_date = vo.date_of_visit
+	WHERE vo.service_package IN (
+			'Standard of Care',
+			'Facility Fast-Track',
+			'Facility based DSDM',
+			'Community based DSDM'
+		) AND vo.rn_desc = 1
 ),
--- The current_dsd_streak CTE identifies the last start date for a patient who are recieve the DSD service package.
+-- The current_dsd_streak CTE identifies the last start date for a patient who are recieving the DSD service package.
 current_dsdm_streak AS (
 	SELECT
 		vo.initial_encounter_id,
@@ -839,7 +854,7 @@ tb_screening AS (
 			OR last_tb_xray = 'Yes positive'
 			OR last_tb_genexpert = 'Yes positive' THEN 'Yes'
 		END AS last_tb_screening_positive,
-		last_tb_referral
+		tb_screening_referral
 	FROM
 		(
 			SELECT
@@ -849,7 +864,7 @@ tb_screening AS (
 				tb_sputum_screening AS last_tb_sputum,
 				tb_xray_screening AS last_tb_xray,
 				tb_genexpert_screening AS last_tb_genexpert,
-				referred_for_tb_management AS last_tb_referral,
+				referred_for_tb_management AS tb_screening_referral,
 				ROW_NUMBER() OVER (
 					PARTITION BY initial_encounter_id
 					ORDER BY
@@ -891,6 +906,18 @@ tb_xray AS (
 		) tb
 	WHERE
 		rn = 1
+),
+-- The last_tb_referral CTE extracts the date of last consultation where the patient was referred for TB management.
+last_tb_referral AS (
+	SELECT
+		initial_encounter_id,
+		MAX(date_of_visit) AS last_tb_referral_date
+	FROM
+		visits_ordered vo
+	WHERE
+		referred_for_tb_management = 'Yes'
+	GROUP BY
+		initial_encounter_id
 ),
 -- The asthma_exacerbation CTE extracts the last asthma exacerbation level reported.
 asthma_exacerbation AS (
@@ -1510,9 +1537,13 @@ SELECT
 	cll.current_lifestyle_list AS current_lifestyle_list,
 	COALESCE(vo.service_package, vo.prev_service_package) AS last_service_package,
 	vo.dsdm_group_name_and_number AS current_dsdm_group,
-	vo.dsdm_visit_status AS last_dsdm_visit_status,
+	vo.dsdm_visit_status AS current_dsdm_visit_status,
 	cds.current_dsd_start_date AS last_dsd_start_date,
 	(CURRENT_DATE - cds.current_dsd_start_date) AS days_in_current_dsd,
+	cds.last_dsd_date,
+	cds.last_dsd_service_package,
+	cds.last_dsdm_group,
+	cds.last_dsdm_status,
 	fd.first_dsd_date,
 	fd.first_dsd_service_package,
 	fd.first_dsdm_group,
@@ -1602,9 +1633,10 @@ SELECT
 	tbs.last_tb_xray AS tb_xray,
 	tbs.last_tb_genexpert AS tb_genexpert,
 	tbs.last_tb_screening_positive,
-	tbs.last_tb_referral,
+	tbs.tb_screening_referral,
 	tbx.last_tb_xray_date,
 	tbx.last_tb_xray AS last_tb_xray_result,
+	ltr.last_tb_referral_date,
 	ae.last_asthma_exacerbation_date,
 	ae.last_asthma_exacerbation_level,
 	ce.last_copd_exacerbation_date,
@@ -1737,6 +1769,7 @@ FROM
 	LEFT OUTER JOIN last_seizure ls ON c.initial_encounter_id = ls.initial_encounter_id
 	LEFT OUTER JOIN tb_screening tbs ON c.initial_encounter_id = tbs.initial_encounter_id
 	LEFT OUTER JOIN tb_xray tbx ON c.initial_encounter_id = tbx.initial_encounter_id
+	LEFT OUTER JOIN last_tb_referral ltr ON c.initial_encounter_id = ltr.initial_encounter_id
 	LEFT OUTER JOIN asthma_exacerbation ae ON c.initial_encounter_id = ae.initial_encounter_id
 	LEFT OUTER JOIN copd_exacerbation ce ON c.initial_encounter_id = ce.initial_encounter_id
 	LEFT OUTER JOIN last_bp lbp ON c.initial_encounter_id = lbp.initial_encounter_id
