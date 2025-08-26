@@ -1,7 +1,7 @@
--- CTE for the information about the initial visit (date, location, HIV status and PrEP)
+-- The first CTE build the frame for the patients entering the cohort. This frame is based on client form with visit type of "initial visit". Each patient should have only one initial visit, there is no exit of the cohort for now.
 WITH initial AS (
     SELECT
-        DISTINCT ON (cf.patient_id) cf.patient_id,
+        DISTINCT ON (cf.patient_id) cf.patient_id, cf.encounter_id AS initial_encounter_id,
         cf.date_of_visit AS date_of_initial_visit,
         cf.visit_location AS initial_visit_location,
         cf.hiv_status_at_visit AS initial_hiv_status_at_visit,
@@ -14,150 +14,6 @@ WITH initial AS (
     ORDER BY
         cf.patient_id,
         cf.date_of_visit
-),
--- CTE for age group for current age and inclusion age  
-age_calculation AS (
-    SELECT
-        cf.patient_id,
-        EXTRACT(
-            YEAR
-            FROM
-                age(
-                    cf.date_of_visit,
-                    TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-                )
-        ) AS age_inclusion
-    FROM
-        "1_client_form" cf
-        JOIN person_details_default pdd ON cf.patient_id = pdd.person_id
-    WHERE
-        cf.visit_type = 'Initial visit'
-    ORDER BY
-        cf.patient_id,
-        cf.date_of_visit
-),
-groupe_age_inclusion AS (
-    SELECT
-        cf.patient_id,
-        CASE
-            WHEN EXTRACT(
-                YEAR
-                FROM
-                    age(
-                        cf.date_of_visit,
-                        TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-                    )
-            ) :: int <= 4 THEN '0-4'
-            WHEN EXTRACT(
-                YEAR
-                FROM
-                    age(
-                        cf.date_of_visit,
-                        TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-                    )
-            ) :: int BETWEEN 5
-            AND 14 THEN '05-14'
-            WHEN EXTRACT(
-                YEAR
-                FROM
-                    age(
-                        cf.date_of_visit,
-                        TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-                    )
-            ) :: int BETWEEN 15
-            AND 24 THEN '15-24'
-            WHEN EXTRACT(
-                YEAR
-                FROM
-                    age(
-                        cf.date_of_visit,
-                        TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-                    )
-            ) :: int BETWEEN 25
-            AND 34 THEN '25-34'
-            WHEN EXTRACT(
-                YEAR
-                FROM
-                    age(
-                        cf.date_of_visit,
-                        TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-                    )
-            ) :: int BETWEEN 35
-            AND 44 THEN '35-44'
-            WHEN EXTRACT(
-                YEAR
-                FROM
-                    age(
-                        cf.date_of_visit,
-                        TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-                    )
-            ) :: int BETWEEN 45
-            AND 54 THEN '45-54'
-            WHEN EXTRACT(
-                YEAR
-                FROM
-                    age(
-                        cf.date_of_visit,
-                        TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-                    )
-            ) :: int BETWEEN 55
-            AND 64 THEN '55-64'
-            WHEN EXTRACT(
-                YEAR
-                FROM
-                    age(
-                        cf.date_of_visit,
-                        TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-                    )
-            ) :: int >= 65 THEN '65+'
-            ELSE NULL
-        END AS groupe_age_inclusion
-    FROM
-        "1_client_form" cf
-        JOIN person_details_default pdd ON cf.patient_id = pdd.person_id
-    WHERE
-        cf.visit_type = 'Initial visit'
-    ORDER BY
-        cf.patient_id,
-        cf.date_of_visit
-),
-group_age_current AS (
-    SELECT
-        pdd.person_id AS patient_id,
-        pdd.age AS age_current,
-        CASE
-            WHEN pdd.age :: int <= 4 THEN '0-4'
-            WHEN pdd.age :: int BETWEEN 5
-            AND 14 THEN '05-14'
-            WHEN pdd.age :: int BETWEEN 15
-            AND 24 THEN '15-24'
-            WHEN pdd.age :: int BETWEEN 25
-            AND 34 THEN '25-34'
-            WHEN pdd.age :: int BETWEEN 35
-            AND 44 THEN '35-44'
-            WHEN pdd.age :: int BETWEEN 45
-            AND 54 THEN '45-54'
-            WHEN pdd.age :: int BETWEEN 55
-            AND 64 THEN '55-64'
-            WHEN pdd.age :: int >= 65 THEN '65+'
-            ELSE NULL
-        END AS groupe_age_current
-    FROM
-        person_details_default pdd
-    WHERE
-        pdd.age IS NOT NULL
-),
-age AS (
-    SELECT
-        DISTINCT on (gac.patient_id) gac.patient_id,
-        ac.age_inclusion,
-        gai.groupe_age_inclusion,
-        gac.age_current,
-        gac.groupe_age_current
-    FROM
-        age_calculation ac
-        LEFT OUTER JOIN group_age_current gac USING (patient_id)
-        LEFT OUTER JOIN groupe_age_inclusion gai USING (patient_id)
 ),
 -- CTE with last visit information - mandatory question (missing diagnosis list and contraceptive list)
 last_mandatory_visit_information AS (
@@ -407,7 +263,7 @@ last_lab_hiv_result AS (
         "2_lab_and_vital_signs_form" l
     WHERE
         l.date_of_rapid_hiv_test IS NOT NULL
-        OR l.rapid_hiv_test_result IS NOT NULL
+        AND l.rapid_hiv_test_result IS NOT NULL
     ORDER BY
         l.patient_id,
         l.date_of_rapid_hiv_test DESC
@@ -421,7 +277,7 @@ last_lab_syphilis AS (
         "2_lab_and_vital_signs_form" l
     WHERE
         l.date_of_syphilis_test IS NOT NULL
-        OR l.syphilis_test_result IS NOT NULL
+        AND l.syphilis_test_result IS NOT NULL
     ORDER BY
         l.patient_id,
         l.date_of_syphilis_test DESC
@@ -435,7 +291,7 @@ last_lab_hep_b AS (
         "2_lab_and_vital_signs_form" l
     WHERE
         l.date_of_hepatitis_b_test IS NOT NULL
-        OR l.hepatitis_b_test_result IS NOT NULL
+        AND l.hepatitis_b_test_result IS NOT NULL
     ORDER BY
         l.patient_id,
         l.date_of_hepatitis_b_test DESC
@@ -449,7 +305,7 @@ last_lab_pregnancy AS (
         "2_lab_and_vital_signs_form" l
     WHERE
         l.date_of_pregnancy_test IS NOT NULL
-        OR l.pregnancy_test_result IS NOT NULL
+        AND l.pregnancy_test_result IS NOT NULL
     ORDER BY
         l.patient_id,
         l.date_of_pregnancy_test DESC
@@ -466,20 +322,6 @@ last_lab_hpv AS (
         l.patient_id,
         l.date_of_sample_collection_for_hpv_test DESC
 ),
-last_lab_creat AS (
-    SELECT
-        DISTINCT ON (l.patient_id) l.patient_id,
-        l.date_of_creatinine_concentration,
-        l.creatinine_concentration_result
-    FROM
-        "2_lab_and_vital_signs_form" l
-    WHERE
-        l.date_of_creatinine_concentration IS NOT NULL
-        OR l.creatinine_concentration_result IS NOT NULL
-    ORDER BY
-        l.patient_id,
-        l.date_of_creatinine_concentration DESC
-),
 last_lab_gfr AS (
     SELECT
         DISTINCT ON (l.patient_id) l.patient_id,
@@ -489,7 +331,7 @@ last_lab_gfr AS (
         "2_lab_and_vital_signs_form" l
     WHERE
         l.date_of_estimated_glomerular_filtration_rate IS NOT NULL
-        OR l.estimated_glomerular_filtration_rate_result IS NOT NULL
+        AND l.estimated_glomerular_filtration_rate_result IS NOT NULL
     ORDER BY
         l.patient_id,
         l.date_of_estimated_glomerular_filtration_rate DESC
@@ -592,7 +434,7 @@ final_prep_visits AS (
     LEFT JOIN prep_visit_cards_raw bl ON f.patient_id = bl.patient_id AND bl.rn_before_last = 2
     WHERE f.rn_first = 1
 )
--- Final query to select all required fields from the CTEs
+-- Main query to select all required fields from the CTEs
 SELECT
     pi.patient_id,
     "Patient_Identifier",
@@ -604,10 +446,30 @@ SELECT
     pad.county_district,
     "Nationality",
     "Literacy",
-    a.age_inclusion,
-    a.groupe_age_inclusion,
-    a.age_current,
-    a.groupe_age_current,
+    EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) AS age_inclusion,
+	CASE 
+		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int <= 4 THEN '0-4'
+		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 5 AND EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) <= 14 THEN '05-14'
+		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 15 AND EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) <= 24 THEN '15-24'
+		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 25 AND EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) <= 34 THEN '25-34'
+		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 35 AND EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) <= 44 THEN '35-44'
+		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 45 AND EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) <= 54 THEN '45-54'
+		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 55 AND EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))) <= 64 THEN '55-64'
+		WHEN EXTRACT(YEAR FROM age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))::int >= 65 THEN '65+'
+		ELSE NULL
+	END AS age_group_inclusion,
+        pdd.age AS age_current,
+        CASE
+            WHEN pdd.age :: int <= 4 THEN '0-4'
+            WHEN pdd.age :: int BETWEEN 5 AND 14 THEN '05-14'
+            WHEN pdd.age :: int BETWEEN 15 AND 24 THEN '15-24'
+            WHEN pdd.age :: int BETWEEN 25 AND 34 THEN '25-34'
+            WHEN pdd.age :: int BETWEEN 35 AND 44 THEN '35-44'
+            WHEN pdd.age :: int BETWEEN 45 AND 54 THEN '45-54'
+            WHEN pdd.age :: int BETWEEN 55 AND 64 THEN '55-64'
+            WHEN pdd.age :: int >= 65 THEN '65+'
+            ELSE NULL
+        END AS groupe_age_current ,
     i.date_of_initial_visit,
     i.initial_visit_location,
     i.initial_hiv_status_at_visit,
@@ -687,7 +549,7 @@ FROM
     LEFT OUTER JOIN person_address_default pad ON pi.patient_id = pad.person_id
     LEFT OUTER JOIN person_attributes pa ON pi.patient_id = pa.person_id
     LEFT OUTER JOIN initial i ON pi.patient_id = i.patient_id
-    LEFT OUTER JOIN age a ON pi.patient_id = a.patient_id
+    LEFT OUTER JOIN patient_encounter_details_default ped ON i.initial_encounter_id = ped.encounter_id
     LEFT OUTER JOIN last_mandatory_visit_information lmvi ON pi.patient_id = lmvi.patient_id
     LEFT OUTER JOIN last_hpv_treated lht ON pi.patient_id = lht.patient_id
     LEFT OUTER JOIN last_appointment la ON pi.patient_id = la.patient_id
@@ -699,7 +561,6 @@ FROM
     LEFT OUTER JOIN last_lab_hep_b llhb ON pi.patient_id = llhb.patient_id
     LEFT OUTER JOIN last_lab_pregnancy llpt ON pi.patient_id = llpt.patient_id
     LEFT OUTER JOIN last_lab_hpv llhpv ON pi.patient_id = llhpv.patient_id
-    LEFT OUTER JOIN last_lab_creat llc ON pi.patient_id = llc.patient_id
     LEFT OUTER JOIN last_lab_gfr llg ON pi.patient_id = llg.patient_id
     LEFT OUTER JOIN final_prep_register prs ON pi.patient_id = prs.patient_id
     LEFT OUTER JOIN final_prep_visits pvc ON pi.patient_id = pvc.patient_id
