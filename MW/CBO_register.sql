@@ -185,9 +185,9 @@ last_lab_pregnancy AS (
 last_lab_hpv AS (
     SELECT
         DISTINCT ON (l.patient_id) l.patient_id,
-        l.date_of_sample_collection_for_hpv_test
-    FROM
-        "2_lab_and_vital_signs_form" l
+        l.date_of_sample_collection_for_hpv_test as last_date_of_sample_collection_for_hpv_test,
+        l.date_of_hpv_test_result_received_by_client as last_date_of_hpv_test_result_received_by_client
+        FROM "2_lab_and_vital_signs_form" l
     WHERE
         l.date_of_sample_collection_for_hpv_test IS NOT NULL
     ORDER BY
@@ -384,7 +384,8 @@ SELECT
     llhb.hepatitis_b_test_result,
     llpt.date_of_pregnancy_test,
     llpt.pregnancy_test_result,
-    llhpv.date_of_sample_collection_for_hpv_test,
+    llhpv.last_date_of_sample_collection_for_hpv_test,
+    llhpv.last_date_of_hpv_test_result_received_by_client,
     hpv_result_data_entry_date,
     hpv_grouped.list_of_hpv_results,
     hpv_grouped.list_of_hpv_positive_results,
