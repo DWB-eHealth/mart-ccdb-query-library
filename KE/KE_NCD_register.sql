@@ -1271,6 +1271,7 @@ last_hiv AS (
 					SELECT
 						patient_id,
 						encounter_id,
+						date_of_hiv_test AS date_of_visit,
 						date_of_hiv_test,
 						hiv_test_result,
 						form_field_path
@@ -1283,6 +1284,7 @@ last_hiv AS (
 					SELECT
 						patient_id,
 						encounter_id,
+						date_of_visit,
 						COALESCE(date_last_tested_for_hiv, date_of_visit) AS date_of_hiv_test,
 						hiv_status_at_initial_visit AS hiv_test_result,
 						form_field_path
@@ -1292,8 +1294,8 @@ last_hiv AS (
 						COALESCE(date_last_tested_for_hiv, date_of_visit) IS NOT NULL
 						AND hiv_status_at_initial_visit IS NOT NULL
 				) vli ON c.patient_id = vli.patient_id
-				AND c.initial_visit_date <= vli.date_of_hiv_test
-				AND COALESCE(c.outcome_date, CURRENT_DATE) >= vli.date_of_hiv_test
+				AND c.initial_visit_date <= vli.date_of_visit
+				AND COALESCE(c.outcome_date, CURRENT_DATE) >= vli.date_of_visit
 		) hiv
 	WHERE
 		rn = 1
