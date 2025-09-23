@@ -450,7 +450,15 @@ SELECT
 	lfl.dernière_fiche_location,
 	lf.date_derniere_visite,
 	lf.dernière_fiche_type,
-	CASE WHEN lf.date_derniere_visite < (CURRENT_DATE - INTERVAL '90 DAYS') THEN 'Oui' ELSE NULL END AS sans_visite_90j,
+	dp.date_derniere_ptpe,
+	CASE WHEN GREATEST(
+         COALESCE(lf.date_derniere_visite, DATE '1900-01-01'),
+         COALESCE(dp.date_derniere_ptpe, DATE '1900-01-01')
+       ) < (CURRENT_DATE - INTERVAL '90 DAYS') THEN 'Oui'
+  WHEN lf.date_derniere_visite IS NULL AND dp.date_derniere_ptpe IS NULL
+    THEN 'Oui' -- aucun enregistrement => considéré sans visite
+  ELSE NULL
+END AS sans_visite_90j,
 	c.date_de_sortie,
 	c.statut_de_sortie,
 	CASE 
