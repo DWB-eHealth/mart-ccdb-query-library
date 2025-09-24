@@ -380,7 +380,34 @@ hospitalisé_dernière_6m AS (
 	LEFT OUTER JOIN mnt_vih_tb n
 		ON c.patient_id = n.patient_id AND c.date_inclusion <= n.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date::date
 	WHERE n.hospitalisé_depuis_la_dernière_visite = 'Oui' and n.date <= CURRENT_DATE and n.date >= CURRENT_DATE - INTERVAL '6 months'
-	GROUP BY c.patient_id, c.encounter_id_inclusion, n.hospitalisé_depuis_la_dernière_visite)
+	GROUP BY c.patient_id, c.encounter_id_inclusion, n.hospitalisé_depuis_la_dernière_visite),
+-- Dernier suivi autocontrôle de la glycémie
+dernière_autocontrôle_glycémie AS (
+    SELECT 
+        patient_id,
+        encounter_id_inclusion,
+        date_dernière_autocontrôle_glycémie,
+        derniere_hypoglycemie_depuis_derniere_visite,
+        derniere_pourcentage_glycemies_normales
+    FROM (
+        SELECT
+            c.patient_id,
+            c.encounter_id_inclusion,
+            svil.date_de_suivi_autocontrôle_de_la_glycémie AS date_dernière_autocontrôle_glycémie,
+            svil.hypoglycémie_s_depuis_la_dernière_visite AS derniere_hypoglycemie_depuis_derniere_visite,
+            svil.pourcentage_de_glycémies_dans_la_norme AS derniere_pourcentage_glycemies_normales,
+            ROW_NUMBER() OVER (
+                PARTITION BY c.encounter_id_inclusion 
+                ORDER BY svil.date_de_suivi_autocontrôle_de_la_glycémie DESC
+            ) AS rn
+        FROM cohorte c
+        LEFT OUTER JOIN signes_vitaux_et_laboratoire svil
+            ON c.patient_id = svil.patient_id
+            AND c.date_inclusion <= svil.date_de_suivi_autocontrôle_de_la_glycémie::date
+            AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_de_suivi_autocontrôle_de_la_glycémie::date
+        WHERE svil.date_de_suivi_autocontrôle_de_la_glycémie IS NOT NULL
+    ) foo
+    WHERE rn = 1)
 -- Main query --
 SELECT
 	pi."Patient_Identifier",
@@ -532,6 +559,9 @@ END AS sans_visite_90j,
 	dgyl.date_dernière_glycémie,
 	dgyl.dernière_glycémie,
 	CASE WHEN dhba1c.dernière_hba1c < 8 THEN 'Oui' WHEN dhba1c.dernière_hba1c >= 8 THEN 'Non' WHEN dhba1c.dernière_hba1c IS NULL AND dgyl.dernière_glycémie < 150 THEN 'Oui' WHEN dhba1c.dernière_hba1c IS NULL AND dgyl.dernière_glycémie >= 150 THEN 'No' END AS diabète_contrôlé,
+	dag.date_dernière_autocontrôle_glycémie,
+	dag.derniere_hypoglycemie_depuis_derniere_visite,
+	dag.derniere_pourcentage_glycemies_normales,
 	dv.enceinte_dernière_visite, 
 	dv.allaitante_dernière_visite, 
 	dv.hospitalisé_signalée_dernière_visite, 
@@ -588,4 +618,6 @@ LEFT OUTER JOIN dernière_visite dv
 LEFT OUTER JOIN dernière_gravité_asthme dga 
 	ON c.encounter_id_inclusion = dga.encounter_id_inclusion
 LEFT OUTER JOIN hospitalisé_dernière_6m hd6m 
-	ON c.encounter_id_inclusion = hd6m.encounter_id_inclusion;
+	ON c.encounter_id_inclusion = hd6m.encounter_id_inclusion
+	LEFT OUTER JOIN dernière_autocontrôle_glycémie dag
+    ON c.encounter_id_inclusion = dag.encounter_id_inclusion;
