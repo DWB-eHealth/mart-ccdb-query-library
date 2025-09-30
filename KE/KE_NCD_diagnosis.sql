@@ -129,7 +129,7 @@ SELECT
 	pi. "Patient_Identifier",
 	c.patient_id,
 	c.initial_encounter_id,
-	pdd.age AS age_current,
+	pdd.age :: INT AS age_current,
 	CASE
 		WHEN pdd.age :: INT <= 4 THEN '0-4'
 		WHEN pdd.age :: INT >= 5
