@@ -1349,7 +1349,7 @@ SELECT
 	pa."patientFileNumber",
 	pa."Patient_Unique_ID_CCC_No",
 	pa."facilityForArt",
-	pdd.age AS age_current,
+	pdd.age :: INT AS age_current,
 	CASE
 		WHEN pdd.age :: INT <= 4 THEN '0-4'
 		WHEN pdd.age :: INT >= 5
