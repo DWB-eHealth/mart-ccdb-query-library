@@ -187,7 +187,7 @@ dernière_test_vih AS (
 				patient_id, 
 				CASE WHEN date_de_test_vih_de_confirmation IS NOT NULL AND test_vih_de_confirmation IS NOT NULL THEN date_de_test_vih_de_confirmation WHEN (date_de_test_vih_de_confirmation IS NULL OR test_vih_de_confirmation IS NULL) AND date_de_test_vih_de_routine IS NOT NULL AND test_vih_de_routine IS NOT NULL THEN date_de_test_vih_de_routine ELSE NULL END AS date_test_vih, 
 				CASE WHEN date_de_test_vih_de_confirmation IS NOT NULL AND test_vih_de_confirmation IS NOT NULL THEN test_vih_de_confirmation WHEN (date_de_test_vih_de_confirmation IS NULL OR test_vih_de_confirmation IS NULL) AND date_de_test_vih_de_routine IS NOT NULL AND test_vih_de_routine IS NOT NULL THEN test_vih_de_routine ELSE NULL END AS test_vih 
-			FROM signes_vitaux_et_informations_laboratoire
+			FROM signes_vitaux_et_laboratoire svil
 			WHERE (date_de_test_vih_de_confirmation IS NOT NULL AND test_vih_de_confirmation IS NOT NULL) OR (date_de_test_vih_de_routine IS NOT NULL AND test_vih_de_routine IS NOT NULL)) svil 
 			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date_test_vih::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_test_vih::date) foo
 	WHERE rn = 1),	
@@ -207,14 +207,14 @@ dernière_cd4 AS (
 				patient_id, 
 				COALESCE(date_de_prélèvement_cd4, date_de_récéption_des_résultats_cd4) AS date_cd4, 
 				résultat_brut_cd4
-			FROM signes_vitaux_et_informations_laboratoire_cd4
+			FROM signes_vitaux_et_laboratoire_cd4
 			WHERE encounter_id > 14375
 			UNION
 			SELECT
 				patient_id, 
 				COALESCE(MAX(date_de_prélèvement_cd4), MAX(date_de_récéption_des_résultats_cd4)) AS date_cd4, 
 				MAX(résultat_brut_cd4::int)
-			FROM signes_vitaux_et_informations_laboratoire_cd4
+			FROM signes_vitaux_et_laboratoire_cd4
 			WHERE encounter_id <= 14375
 			GROUP BY encounter_id, patient_id) svil 
 			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date_cd4::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_cd4::date
@@ -236,110 +236,105 @@ dernière_charge_virale_vih AS (
 				patient_id, 
 				COALESCE(date_de_prélèvement_charge_virale_vih, date_de_réception_des_résultats_charge_virale_vih) AS date_charge_virale_vih, 
 				résultat_brut_charge_virale_vih
-			FROM signes_vitaux_et_informations_laboratoire_charge_virale_vih
+			FROM signes_vitaux_et_laboratoire_charge_virale_vih
 			WHERE encounter_id > 14371
 			UNION
 			SELECT 
     			patient_id, 
 				COALESCE(MAX(date_de_prélèvement_charge_virale_vih), MAX(date_de_réception_des_résultats_charge_virale_vih)) AS date_charge_virale_vih,
 				MAX(résultat_brut_charge_virale_vih::int) AS résultat_brut_charge_virale_vih
-			FROM signes_vitaux_et_informations_laboratoire_charge_virale_vih
+			FROM signes_vitaux_et_laboratoire_charge_virale_vih
 			WHERE encounter_id <= 14371
 			GROUP BY encounter_id, patient_id) svil 
 			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date_charge_virale_vih::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_charge_virale_vih::date
 		WHERE svil.date_charge_virale_vih IS NOT NULL AND svil.résultat_brut_charge_virale_vih IS NOT NULL) foo
 	WHERE rn = 1),
--- The last blood pressure CTE extracts the last complete blood pressure measurements reported per cohort enrollment. Only blood pressures with a date, systolic, and diastolic information are reported.
+-- The last blood pressure CTE extracts the last complete blood pressure measurements reported per cohort enrollment.
 dernière_pression_artérielle AS (
-	SELECT patient_id, encounter_id_inclusion, date_dernière_pression_artérielle, dernière_pression_artérielle_systolique, dernière_pression_artérielle_diastolique
-	FROM (
-		SELECT 
-			c.patient_id, 
-			c.encounter_id_inclusion, 
-			svil.date AS date_dernière_pression_artérielle,
-			svil.tension_arterielle_systolique AS dernière_pression_artérielle_systolique,
-			svil.tension_arterielle_diastolique AS dernière_pression_artérielle_diastolique, 
-			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY svil.date DESC) AS rn
-		FROM cohorte c
-		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
-			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
-		WHERE svil.date IS NOT NULL AND svil.tension_arterielle_systolique IS NOT NULL AND svil.tension_arterielle_diastolique IS NOT NULL) foo
-	WHERE rn = 1),
--- The last BMI CTE extracts the last BMI measurement reported per cohort enrollment. Only BMI records with a date, weight, and height are reported.
+    SELECT patient_id, encounter_id_inclusion, date_dernière_pression_artérielle, dernière_pression_artérielle_systolique, dernière_pression_artérielle_diastolique
+    FROM (
+        SELECT 
+            c.patient_id, 
+            c.encounter_id_inclusion, 
+            svil.date_heure_enregistrée AS date_dernière_pression_artérielle,
+            svil.tension_arterielle_systolique AS dernière_pression_artérielle_systolique,
+            svil.tension_arterielle_diastolique AS dernière_pression_artérielle_diastolique, 
+            ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY svil.date_heure_enregistrée DESC) AS rn
+        FROM cohorte c
+        LEFT OUTER JOIN signes_vitaux_et_laboratoire svil
+            ON c.patient_id = svil.patient_id 
+           AND c.date_inclusion <= svil.date_heure_enregistrée::date 
+           AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_heure_enregistrée::date
+        WHERE svil.date_heure_enregistrée IS NOT NULL 
+          AND svil.tension_arterielle_systolique IS NOT NULL 
+          AND svil.tension_arterielle_diastolique IS NOT NULL
+    ) foo
+    WHERE rn = 1
+),
+
+-- The last BMI CTE extracts the last BMI measurement reported per cohort enrollment.
 dernière_imc AS (
-	SELECT patient_id, encounter_id_inclusion, date_dernière_imc, dernière_imc
-	FROM (
-		SELECT
-			c.patient_id, 
-			c.encounter_id_inclusion, 
-			svil.date AS date_dernière_imc,
-			svil.indice_de_masse_corporelle AS dernière_imc, 
-			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY svil.date DESC) AS rn
-		FROM cohorte c
-		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
-			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
-		WHERE svil.date IS NOT NULL AND svil.indice_de_masse_corporelle IS NOT NULL) foo
-	WHERE rn = 1),
--- The last HbA1c CTE extracts the last HbA1c measurement reported per cohort enrollment. Only HbA1c records with a date and result value are reported.
+    SELECT patient_id, encounter_id_inclusion, date_dernière_imc, dernière_imc
+    FROM (
+        SELECT
+            c.patient_id, 
+            c.encounter_id_inclusion, 
+            svil.date_heure_enregistrée AS date_dernière_imc,
+            svil.indice_de_masse_corporelle AS dernière_imc, 
+            ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY svil.date_heure_enregistrée DESC) AS rn
+        FROM cohorte c
+        LEFT OUTER JOIN signes_vitaux_et_laboratoire svil
+            ON c.patient_id = svil.patient_id 
+           AND c.date_inclusion <= svil.date_heure_enregistrée::date 
+           AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_heure_enregistrée::date
+        WHERE svil.date_heure_enregistrée IS NOT NULL 
+          AND svil.indice_de_masse_corporelle IS NOT NULL
+    ) foo
+    WHERE rn = 1
+),
+
+-- The last HbA1c CTE extracts the last HbA1c measurement reported per cohort enrollment.
 dernière_hba1c AS (
-	SELECT patient_id, encounter_id_inclusion, date_dernière_hba1c, dernière_hba1c
-	FROM (
-		SELECT 
-			c.patient_id, 
-			c.encounter_id_inclusion, 
-			COALESCE(svil.date_de_prélèvement, svil.date) AS date_dernière_hba1c,
-			svil.hba1c AS dernière_hba1c, 
-			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
-		FROM cohorte c
-		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
-			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
-		WHERE COALESCE(svil.date_de_prélèvement, svil.date) IS NOT NULL AND svil.hba1c IS NOT NULL) foo
-	WHERE rn = 1),
--- The last glycémie CTE extracts the last glycémie measurement reported per cohort enrollment. Only glycémie records with a date and result value are reported.
+    SELECT patient_id, encounter_id_inclusion, date_dernière_hba1c, dernière_hba1c
+    FROM (
+        SELECT 
+            c.patient_id, 
+            c.encounter_id_inclusion, 
+            COALESCE(svil.date_de_prélèvement, svil.date_heure_enregistrée) AS date_dernière_hba1c,
+            svil.hba1c AS dernière_hba1c, 
+            ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY COALESCE(svil.date_de_prélèvement, svil.date_heure_enregistrée) DESC) AS rn
+        FROM cohorte c
+        LEFT OUTER JOIN signes_vitaux_et_laboratoire svil
+            ON c.patient_id = svil.patient_id 
+           AND c.date_inclusion <= COALESCE(svil.date_de_prélèvement, svil.date_heure_enregistrée)::date 
+           AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= COALESCE(svil.date_de_prélèvement, svil.date_heure_enregistrée)::date
+        WHERE COALESCE(svil.date_de_prélèvement, svil.date_heure_enregistrée) IS NOT NULL 
+          AND svil.hba1c IS NOT NULL
+    ) foo
+    WHERE rn = 1
+),
+
+-- The last glycémie CTE extracts the last glycémie measurement reported per cohort enrollment.
 dernière_glycémie AS (
-	SELECT patient_id, encounter_id_inclusion, date_dernière_glycémie, dernière_glycémie
-	FROM (
-		SELECT 
-			c.patient_id, 
-			c.encounter_id_inclusion, 
-			COALESCE(svil.date_de_prélèvement, svil.date) AS date_dernière_glycémie,
-			svil.glycémie AS dernière_glycémie, 
-			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
-		FROM cohorte c
-		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
-			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
-		WHERE COALESCE(svil.date_de_prélèvement, svil.date) IS NOT NULL AND svil.glycémie IS NOT NULL) foo
-	WHERE rn = 1),
--- The last protéinurie CTE extracts the last protéinurie measurement reported per cohort enrollment. Only protéinurie records with a date and result value are reported.
-dernière_protéinurie AS (
-	SELECT patient_id, encounter_id_inclusion, date_dernière_protéinurie, dernière_protéinurie
-	FROM (
-		SELECT 
-			c.patient_id, 
-			c.encounter_id_inclusion, 
-			COALESCE(svil.date_de_prélèvement, svil.date) AS date_dernière_protéinurie,
-			svil.protéinurie AS dernière_protéinurie, 
-			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
-		FROM cohorte c
-		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
-			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
-		WHERE COALESCE(svil.date_de_prélèvement, svil.date) IS NOT NULL AND svil.protéinurie IS NOT NULL) foo
-	WHERE rn = 1),
--- The last créatine  CTE extracts the last créatine measurement reported per cohort enrollment. Only créatine records with a date and result value are reported.
-dernière_créatine AS (
-	SELECT patient_id, encounter_id_inclusion, date_dernière_créatine, dernière_créatine
-	FROM (
-		SELECT 
-			c.patient_id, 
-			c.encounter_id_inclusion, 
-			COALESCE(svil.date_de_prélèvement, svil.date) AS date_dernière_créatine,
-			svil.créatine AS dernière_créatine, 
-			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY COALESCE(svil.date_de_prélèvement, svil.date) DESC) AS rn
-		FROM cohorte c
-		LEFT OUTER JOIN signes_vitaux_et_informations_laboratoire svil
-			ON c.patient_id = svil.patient_id AND c.date_inclusion <= svil.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date::date
-		WHERE COALESCE(svil.date_de_prélèvement, svil.date) IS NOT NULL AND svil.créatine IS NOT NULL) foo
-	WHERE rn = 1),
+    SELECT patient_id, encounter_id_inclusion, date_dernière_glycémie, dernière_glycémie
+    FROM (
+        SELECT 
+            c.patient_id, 
+            c.encounter_id_inclusion, 
+            COALESCE(svil.date_de_prélèvement, svil.date_heure_enregistrée) AS date_dernière_glycémie,
+            svil.glycémie_aléatoire AS dernière_glycémie, 
+            ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY COALESCE(svil.date_de_prélèvement, svil.date_heure_enregistrée) DESC) AS rn
+        FROM cohorte c
+        LEFT OUTER JOIN signes_vitaux_et_laboratoire svil
+            ON c.patient_id = svil.patient_id 
+           AND c.date_inclusion <= COALESCE(svil.date_de_prélèvement, svil.date_heure_enregistrée)::date 
+           AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= COALESCE(svil.date_de_prélèvement, svil.date_heure_enregistrée)::date
+        WHERE COALESCE(svil.date_de_prélèvement, svil.date_heure_enregistrée) IS NOT NULL 
+          AND svil.glycémie_aléatoire IS NOT NULL
+    ) foo
+    WHERE rn = 1
+),
+
 -- The MNT VIH TB form CTE extracts the last MNT VIH TB visit data per cohort enrollment to look at if there are values reported for pregnancy, family planning, hospitalization, missed medication, seizures, or asthma/COPD exacerbations repoted at the last visit. 
 dernière_visite AS (
 	SELECT patient_id, encounter_id_inclusion, enceinte_dernière_visite, allaitante_dernière_visite, hospitalisé_signalée_dernière_visite, prise_de_médicaments_oubliée_signalée_dernière_visite, convulsions_signalée_dernière_visite, exacerbation_signalée_dernière_visite, nbr_exacerbation_signalée_dernière_visite
@@ -385,7 +380,34 @@ hospitalisé_dernière_6m AS (
 	LEFT OUTER JOIN mnt_vih_tb n
 		ON c.patient_id = n.patient_id AND c.date_inclusion <= n.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date::date
 	WHERE n.hospitalisé_depuis_la_dernière_visite = 'Oui' and n.date <= CURRENT_DATE and n.date >= CURRENT_DATE - INTERVAL '6 months'
-	GROUP BY c.patient_id, c.encounter_id_inclusion, n.hospitalisé_depuis_la_dernière_visite)
+	GROUP BY c.patient_id, c.encounter_id_inclusion, n.hospitalisé_depuis_la_dernière_visite),
+-- Dernier suivi autocontrôle de la glycémie
+dernière_autocontrôle_glycémie AS (
+    SELECT 
+        patient_id,
+        encounter_id_inclusion,
+        date_dernière_autocontrôle_glycémie,
+        derniere_hypoglycemie_depuis_derniere_visite,
+        derniere_pourcentage_glycemies_normales
+    FROM (
+        SELECT
+            c.patient_id,
+            c.encounter_id_inclusion,
+            svil.date_de_suivi_autocontrôle_de_la_glycémie AS date_dernière_autocontrôle_glycémie,
+            svil.hypoglycémie_s_depuis_la_dernière_visite AS derniere_hypoglycemie_depuis_derniere_visite,
+            svil.pourcentage_de_glycémies_dans_la_norme AS derniere_pourcentage_glycemies_normales,
+            ROW_NUMBER() OVER (
+                PARTITION BY c.encounter_id_inclusion 
+                ORDER BY svil.date_de_suivi_autocontrôle_de_la_glycémie DESC
+            ) AS rn
+        FROM cohorte c
+        LEFT OUTER JOIN signes_vitaux_et_laboratoire svil
+            ON c.patient_id = svil.patient_id
+            AND c.date_inclusion <= svil.date_de_suivi_autocontrôle_de_la_glycémie::date
+            AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= svil.date_de_suivi_autocontrôle_de_la_glycémie::date
+        WHERE svil.date_de_suivi_autocontrôle_de_la_glycémie IS NOT NULL
+    ) foo
+    WHERE rn = 1)
 -- Main query --
 SELECT
 	pi."Patient_Identifier",
@@ -455,7 +477,15 @@ SELECT
 	lfl.dernière_fiche_location,
 	lf.date_derniere_visite,
 	lf.dernière_fiche_type,
-	CASE WHEN lf.date_derniere_visite < (CURRENT_DATE - INTERVAL '90 DAYS') THEN 'Oui' ELSE NULL END AS sans_visite_90j,
+	dp.date_derniere_ptpe,
+	CASE WHEN GREATEST(
+         COALESCE(lf.date_derniere_visite, DATE '1900-01-01'),
+         COALESCE(dp.date_derniere_ptpe, DATE '1900-01-01')
+       ) < (CURRENT_DATE - INTERVAL '90 DAYS') THEN 'Oui'
+  WHEN lf.date_derniere_visite IS NULL AND dp.date_derniere_ptpe IS NULL
+    THEN 'Oui' -- aucun enregistrement => considéré sans visite
+  ELSE NULL
+END AS sans_visite_90j,
 	c.date_de_sortie,
 	c.statut_de_sortie,
 	CASE 
@@ -512,7 +542,7 @@ SELECT
 	dtv.test_vih,
 	dc.date_cd4, 
 	dc.résultat_brut_cd4,
-	CASE WHEN dc.résultat_brut_cd4 >= 400 THEN 'Plus de 200 cellules/mL' WHEN dc.résultat_brut_cd4 < 400 THEN 'Moins de 200 cellules/mL' ELSE NULL END AS résultat_seuil_cd4_cellules_ml,
+	CASE WHEN dc.résultat_brut_cd4 >= 200 THEN 'Plus de 200 cellules/mL' WHEN dc.résultat_brut_cd4 < 200 THEN 'Moins de 200 cellules/mL' ELSE NULL END AS résultat_seuil_cd4_cellules_ml,
 	dcv.date_charge_virale_vih, 
 	dcv.résultat_brut_charge_virale_vih, 
 	CASE WHEN dcv.résultat_brut_charge_virale_vih >= 1000 THEN 'Plus de 1000 copies/mL' WHEN dcv.résultat_brut_charge_virale_vih < 1000 THEN 'Moins de 1000 copies/mL' ELSE NULL END AS résultat_seuil_charge_virale_vih, 
@@ -529,10 +559,9 @@ SELECT
 	dgyl.date_dernière_glycémie,
 	dgyl.dernière_glycémie,
 	CASE WHEN dhba1c.dernière_hba1c < 8 THEN 'Oui' WHEN dhba1c.dernière_hba1c >= 8 THEN 'Non' WHEN dhba1c.dernière_hba1c IS NULL AND dgyl.dernière_glycémie < 150 THEN 'Oui' WHEN dhba1c.dernière_hba1c IS NULL AND dgyl.dernière_glycémie >= 150 THEN 'No' END AS diabète_contrôlé,
-	dpr.date_dernière_protéinurie,
-	dpr.dernière_protéinurie,
-	dcr.date_dernière_créatine,
-	dcr.dernière_créatine,
+	dag.date_dernière_autocontrôle_glycémie,
+	dag.derniere_hypoglycemie_depuis_derniere_visite,
+	dag.derniere_pourcentage_glycemies_normales,
 	dv.enceinte_dernière_visite, 
 	dv.allaitante_dernière_visite, 
 	dv.hospitalisé_signalée_dernière_visite, 
@@ -584,13 +613,11 @@ LEFT OUTER JOIN dernière_hba1c dhba1c
 	ON c.encounter_id_inclusion = dhba1c.encounter_id_inclusion
 LEFT OUTER JOIN dernière_glycémie dgyl 
 	ON c.encounter_id_inclusion = dgyl.encounter_id_inclusion
-LEFT OUTER JOIN dernière_protéinurie dpr 
-	ON c.encounter_id_inclusion = dpr.encounter_id_inclusion
-LEFT OUTER JOIN dernière_créatine dcr 
-	ON c.encounter_id_inclusion = dcr.encounter_id_inclusion
 LEFT OUTER JOIN dernière_visite dv 
 	ON c.encounter_id_inclusion = dv.encounter_id_inclusion
 LEFT OUTER JOIN dernière_gravité_asthme dga 
 	ON c.encounter_id_inclusion = dga.encounter_id_inclusion
 LEFT OUTER JOIN hospitalisé_dernière_6m hd6m 
-	ON c.encounter_id_inclusion = hd6m.encounter_id_inclusion;
+	ON c.encounter_id_inclusion = hd6m.encounter_id_inclusion
+	LEFT OUTER JOIN dernière_autocontrôle_glycémie dag
+    ON c.encounter_id_inclusion = dag.encounter_id_inclusion;
