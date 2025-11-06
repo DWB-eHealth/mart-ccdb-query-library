@@ -91,7 +91,7 @@ visits_ordered AS (
 		s.dose_escalation,
 		s.toxicity,
 		s.stop_treatment,
-		s.phq4_result,
+		s.phq4_score,
 		s.integrated_to_mh_program,
 		s.next_medical_appointment_date,
 		ROW_NUMBER() OVER (
@@ -355,14 +355,14 @@ last_mh_screening AS (
 	SELECT
 		initial_encounter_id,
 		last_date_mh_screening,
-		last_phq4_result,
+		last_phq4_score,
 		integrated_to_mh_program
 	FROM
 		(
 			SELECT
 				initial_encounter_id,
 				scd_date_of_visit AS last_date_mh_screening,
-				phq4_result AS last_phq4_result,
+				phq4_score AS last_phq4_score,
 				integrated_to_mh_program,
 				ROW_NUMBER() OVER (
 					PARTITION BY initial_encounter_id
@@ -372,8 +372,8 @@ last_mh_screening AS (
 			FROM
 				visits_ordered vo
 			WHERE
-				phq4_result IS NOT NULL
-				AND phq4_result != 'None'
+				phq4_score IS NOT NULL
+				AND phq4_score != 'None'
 		) asthma
 	WHERE
 		rn = 1
@@ -797,7 +797,7 @@ SELECT
 	lbt.last_date_blood_transfusion,
 	lbt.last_blood_transfusion,
 	lms.last_date_mh_screening,
-	lms.last_phq4_result,
+	lms.last_phq4_score,
 	lms.integrated_to_mh_program,
 	lb.last_bmi_date,
 	lb.last_bmi,
