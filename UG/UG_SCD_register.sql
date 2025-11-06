@@ -373,8 +373,7 @@ last_mh_screening AS (
 				visits_ordered vo
 			WHERE
 				phq4_score IS NOT NULL
-				AND phq4_score != 'None'
-		) asthma
+		) mh
 	WHERE
 		rn = 1
 ),
