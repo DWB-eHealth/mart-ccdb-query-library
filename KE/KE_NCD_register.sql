@@ -1306,14 +1306,25 @@ medication_edit AS (
 	SELECT
 		c.patient_id,
 		c.initial_encounter_id,
+		mdd.encounter_id,
 		mdd.order_id,
 		COALESCE(mdd.coded_drug_name, mdd.non_coded_drug_name) AS medication_name,
-		mdd.start_date AS date_started,
-		COALESCE(mdd.date_stopped, mdd.calculated_end_date) AS date_ended,
+		mdd.start_date::date AS date_started,
+		COALESCE(mdd.date_stopped, mdd.calculated_end_date)::date AS date_ended,
 		CASE
-			WHEN COALESCE(mdd.date_stopped, mdd.calculated_end_date) > CURRENT_DATE THEN 1
+			WHEN COALESCE(mdd.date_stopped, mdd.calculated_end_date)::date > CURRENT_DATE AND mdd.start_date::date < CURRENT_DATE THEN 1
 			ELSE NULL
-		END AS ongoing
+		END AS ongoing,
+		DENSE_RANK() OVER (
+			PARTITION BY c.initial_encounter_id
+			ORDER BY mdd.encounter_id DESC) AS rn_last_encounter_id,
+		DENSE_RANK() OVER (
+			PARTITION BY c.initial_encounter_id
+			ORDER BY mdd.start_date DESC) AS rn_last_date,
+		CASE
+			WHEN COALESCE(mdd.date_stopped, mdd.calculated_end_date) > now() - interval '30 day' THEN 1
+			ELSE NULL
+		END AS last_30_day_flag
 	FROM
 		medication_data_default mdd
 		LEFT JOIN cohort c ON mdd.patient_id = c.patient_id
@@ -1324,7 +1335,12 @@ medication_edit AS (
 medication_list AS (
 	SELECT
 		initial_encounter_id,
-		STRING_AGG(medication_name, ', ') AS medication_list
+		STRING_AGG(
+			DISTINCT medication_name,
+			', '
+			ORDER BY
+				medication_name
+		) AS medication_list
 	FROM
 		medication_edit
 	GROUP BY
@@ -1334,14 +1350,36 @@ medication_list AS (
 medication_list_ongoing AS (
 	SELECT
 		initial_encounter_id,
-		STRING_AGG(medication_name, ', ') AS medication_list_ongoing
+		STRING_AGG(
+			DISTINCT medication_name,
+			', '
+			ORDER BY
+				medication_name
+		) AS medication_list_ongoing
 	FROM
 		medication_edit
 	WHERE
 		ongoing = 1
 	GROUP BY
 		initial_encounter_id
-) -- *Main query* --
+),
+medication_list_last_encounter AS (
+	SELECT
+		initial_encounter_id,
+		STRING_AGG(
+			DISTINCT medication_name,
+			', '
+			ORDER BY
+				medication_name
+		) AS medication_list_last_encounter
+	FROM
+		medication_edit
+	WHERE
+		rn_last_encounter_id = 1
+	GROUP BY
+		initial_encounter_id
+)
+-- *Main query* --
 SELECT
 	pi."Patient_Identifier",
 	c.patient_id,
@@ -1722,7 +1760,8 @@ SELECT
 	lh.last_hiv,
 	lh.hiv_result_source,
 	ml.medication_list,
-	mlo.medication_list_ongoing
+	mlo.medication_list_ongoing,
+	mlle.medication_list_last_encounter
 FROM
 	cohort c
 	LEFT OUTER JOIN patient_identifier pi ON c.patient_id = pi.patient_id
@@ -1784,4 +1823,5 @@ FROM
 	LEFT OUTER JOIN last_asat las ON c.initial_encounter_id = las.initial_encounter_id
 	LEFT OUTER JOIN last_hiv lh ON c.initial_encounter_id = lh.initial_encounter_id
 	LEFT OUTER JOIN medication_list ml ON c.initial_encounter_id = ml.initial_encounter_id
-	LEFT OUTER JOIN medication_list_ongoing mlo ON c.initial_encounter_id = mlo.initial_encounter_id;
+	LEFT OUTER JOIN medication_list_ongoing mlo ON c.initial_encounter_id = mlo.initial_encounter_id
+	LEFT OUTER JOIN medication_list_last_encounter mlle ON c.initial_encounter_id = mlle.initial_encounter_id;
