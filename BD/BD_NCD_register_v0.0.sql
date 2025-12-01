@@ -517,15 +517,10 @@ base AS (
 	SELECT
 		p.person_id,
 		p.birthyear,
-		p.age :: INT,
+		p.age::int,
 		CURRENT_DATE AS t,
-		EXTRACT(
-			YEAR
-			FROM
-				CURRENT_DATE
-		) :: INT - p.birthyear AS delta
-	FROM
-		person_details_default p
+		EXTRACT(YEAR FROM CURRENT_DATE)::int - p.birthyear AS delta
+	FROM person_details_default p
 	WHERE
 		p.age IS NOT NULL
 ),
@@ -547,47 +542,17 @@ fixed AS (
 			WHEN age = delta + 1 THEN 'corrected_from_delta_plus_1'
 			ELSE 'unusable'
 		END AS age_fix_status
-	FROM
-		base
+	FROM base
 ),
 anchor AS (
 	SELECT
 		*,
-		make_date(
-			birthyear,
-			EXTRACT(
-				MONTH
-				FROM
-					t
-			) :: INT,
-			LEAST(
-				EXTRACT(
-					DAY
-					FROM
-						t
-				) :: INT,
-				EXTRACT(
-					DAY
-					FROM
-						(
-							date_trunc(
-								'month',
-								make_date(
-									birthyear,
-									EXTRACT(
-										MONTH
-										FROM
-											t
-									) :: INT,
-									1
-								)
-							) + INTERVAL '1 month' - INTERVAL '1 day'
-						)
-				) :: INT
-			)
-		) AS t_md_in_yob
-	FROM
-		fixed f
+		make_date(birthyear, 
+			EXTRACT(MONTH FROM t)::int, LEAST(
+				EXTRACT(DAY FROM t)::int, 
+					EXTRACT(DAY FROM (date_trunc('month', make_date(birthyear,
+						EXTRACT(MONTH FROM t)::int, 1)) + INTERVAL '1 month' - INTERVAL '1 day'))::int)) AS t_md_in_yob
+	FROM fixed f
 ),
 age_bounds AS (
 	SELECT
@@ -596,7 +561,7 @@ age_bounds AS (
 		age_fix_status,
 		CASE
 			WHEN age_fixed = delta THEN make_date(birthyear, 1, 1)
-			WHEN age_fixed = delta - 1 THEN (t_md_in_yob + INTERVAL '1 day') :: DATE
+			WHEN age_fixed = delta - 1 THEN (t_md_in_yob + INTERVAL '1 day')::date
 			WHEN age_fixed IS NULL THEN make_date(birthyear, 1, 1)
 		END AS dob_min,
 		CASE
@@ -614,7 +579,7 @@ SELECT
 	c.initial_encounter_id,
 	pa."Other_patient_identifier",
 	pa."Previous_MSF_code",
-	ab.age_fixed :: int AS age_current,
+	ab.age_fixed::int AS age_current,
 	CASE
 		WHEN ab.age_fixed::int <= 4 THEN '0-4'
 		WHEN ab.age_fixed::int >= 5 AND ab.age_fixed::int <= 14 THEN '05-14'
@@ -628,20 +593,20 @@ SELECT
 	END AS age_group_current,
 	(((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int AS age_admission,
 	CASE
-		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT <= 4 THEN '0-4'
-		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT >= 5
-		AND (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT <= 14 THEN '05-14'
-		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT >= 15
-		AND (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT <= 24 THEN '15-24'
-		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT >= 25
-		AND (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT <= 34 THEN '25-34'
-		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT >= 35
-		AND (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT <= 44 THEN '35-44'
-		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT >= 45
-		AND (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT <= 54 THEN '45-54'
-		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT >= 55
-		AND (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT <= 64 THEN '55-64'
-		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425)) :: INT >= 65 THEN '65+'
+		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int <= 4 THEN '0-4'
+		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int >= 5
+		AND (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int <= 14 THEN '05-14'
+		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int >= 15
+		AND (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int <= 24 THEN '15-24'
+		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int >= 25
+		AND (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int <= 34 THEN '25-34'
+		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int >= 35
+		AND (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int <= 44 THEN '35-44'
+		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int >= 45
+		AND (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int <= 54 THEN '45-54'
+		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int >= 55
+		AND (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int <= 64 THEN '55-64'
+		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int >= 65 THEN '65+'
 		ELSE NULL
 	END AS age_group_admission,
 	pdd.gender,
