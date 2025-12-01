@@ -53,20 +53,84 @@ consultations_cte AS (
 		'Follow up' AS visit_type,
 		CASE WHEN provider_type IS NULL THEN 'Psychiatrist' ELSE provider_type END AS provider_type,
 		pmfu.encounter_id
-	FROM psychiatrist_mhgap_follow_up pmfu)
+	FROM psychiatrist_mhgap_follow_up pmfu),
+-- The following CTEs correct for the inccorect age calculation in Bahmni-Mart.
+base AS (
+	SELECT
+		p.person_id,
+		p.birthyear,
+		p.age::int,
+		CURRENT_DATE AS t,
+		EXTRACT(YEAR FROM CURRENT_DATE)::int - p.birthyear AS delta
+	FROM person_details_default p
+	WHERE
+		p.age IS NOT NULL
+),
+fixed AS (
+	SELECT
+		person_id,
+		birthyear,
+		t,
+		delta,
+		age,
+		CASE
+			WHEN age = delta THEN age
+			WHEN age = delta - 1 THEN age
+			WHEN age = delta + 1 THEN delta
+			ELSE NULL
+		END AS age_fixed,
+		CASE
+			WHEN age IN (delta, delta - 1) THEN 'as_is'
+			WHEN age = delta + 1 THEN 'corrected_from_delta_plus_1'
+			ELSE 'unusable'
+		END AS age_fix_status
+	FROM base
+),
+anchor AS (
+	SELECT
+		*,
+		make_date(birthyear, 
+			EXTRACT(MONTH FROM t)::int, LEAST(
+				EXTRACT(DAY FROM t)::int, 
+					EXTRACT(DAY FROM (date_trunc('month', make_date(birthyear,
+						EXTRACT(MONTH FROM t)::int, 1)) + INTERVAL '1 month' - INTERVAL '1 day'))::int)) AS t_md_in_yob
+	FROM fixed f
+),
+age_bounds AS (
+	SELECT
+		person_id,
+		age_fixed,
+		age_fix_status,
+		CASE
+			WHEN age_fixed = delta THEN make_date(birthyear, 1, 1)
+			WHEN age_fixed = delta - 1 THEN (t_md_in_yob + INTERVAL '1 day')::date
+			WHEN age_fixed IS NULL THEN make_date(birthyear, 1, 1)
+		END AS dob_min,
+		CASE
+			WHEN age_fixed = delta THEN t_md_in_yob
+			WHEN age_fixed = delta - 1 THEN make_date(birthyear, 12, 31)
+			WHEN age_fixed IS NULL THEN make_date(birthyear, 12, 31)
+		END AS dob_max
+	FROM
+		anchor
+)
 -- Main query --
 SELECT 
 	DISTINCT ON (cc.patient_id, cc.date::date, cc.visit_location, cc.intervention_setting, cc.type_of_activity, cc.visit_type, cc.provider_type) cc.patient_id,
 	pi."Patient_Identifier",
 	c.intake_encounter_id,
-	pdd.age AS age_current,
-	CASE 
-		WHEN pdd.age::int <= 3 THEN '0-3'
-		WHEN pdd.age::int >= 4 AND pdd.age::int <= 7 THEN '04-07'
-		WHEN pdd.age::int >= 8 AND pdd.age::int <= 14 THEN '08-14'
-		WHEN pdd.age::int >= 15 AND pdd.age::int <= 17 THEN '15-17'
-		WHEN pdd.age::int >= 18 AND pdd.age::int <= 59 THEN '18-59'
-		WHEN pdd.age::int >= 60 THEN '60+'
+	ab.age_fixed::int AS age_current,
+	CASE
+		WHEN ab.age_fixed::int <= 3 THEN '0-3'
+		WHEN ab.age_fixed::int >= 4
+		AND ab.age_fixed::int <= 7 THEN '04-07'
+		WHEN ab.age_fixed::int >= 8
+		AND ab.age_fixed::int <= 14 THEN '08-14'
+		WHEN ab.age_fixed::int >= 15
+		AND ab.age_fixed::int <= 17 THEN '15-17'
+		WHEN ab.age_fixed::int >= 18
+		AND ab.age_fixed::int <= 59 THEN '18-59'
+		WHEN ab.age_fixed::int >= 60 THEN '60+'
 		ELSE NULL
 	END AS age_group_current,
 	pdd.gender,
@@ -85,6 +149,8 @@ LEFT OUTER JOIN cohort c
 	ON cc.patient_id = c.patient_id AND cc.date >= c.intake_date AND (cc.date <= c.discharge_date OR c.discharge_date is NULL)
 LEFT OUTER JOIN patient_identifier pi
 	ON cc.patient_id = pi.patient_id
+LEFT OUTER JOIN age_bounds ab 
+	ON c.patient_id = ab.person_id
 LEFT OUTER JOIN person_details_default pdd 
 	ON cc.patient_id = pdd.person_id
 LEFT OUTER JOIN person_attributes pa

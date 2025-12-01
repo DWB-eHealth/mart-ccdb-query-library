@@ -68,30 +68,98 @@ stressors AS (
 		DISTINCT ON (encounter_id, stressor) encounter_id,
 		stressor
 	FROM stressor_vertical
-	where stressor IS NOT NULL)
+	where stressor IS NOT NULL),
+-- The following CTEs correct for the inccorect age calculation in Bahmni-Mart.
+base AS (
+	SELECT
+		p.person_id,
+		p.birthyear,
+		p.age::int,
+		CURRENT_DATE AS t,
+		EXTRACT(YEAR FROM CURRENT_DATE)::int - p.birthyear AS delta
+	FROM person_details_default p
+	WHERE
+		p.age IS NOT NULL
+),
+fixed AS (
+	SELECT
+		person_id,
+		birthyear,
+		t,
+		delta,
+		age,
+		CASE
+			WHEN age = delta THEN age
+			WHEN age = delta - 1 THEN age
+			WHEN age = delta + 1 THEN delta
+			ELSE NULL
+		END AS age_fixed,
+		CASE
+			WHEN age IN (delta, delta - 1) THEN 'as_is'
+			WHEN age = delta + 1 THEN 'corrected_from_delta_plus_1'
+			ELSE 'unusable'
+		END AS age_fix_status
+	FROM base
+),
+anchor AS (
+	SELECT
+		*,
+		make_date(birthyear, 
+			EXTRACT(MONTH FROM t)::int, LEAST(
+				EXTRACT(DAY FROM t)::int, 
+					EXTRACT(DAY FROM (date_trunc('month', make_date(birthyear,
+						EXTRACT(MONTH FROM t)::int, 1)) + INTERVAL '1 month' - INTERVAL '1 day'))::int)) AS t_md_in_yob
+	FROM fixed f
+),
+age_bounds AS (
+	SELECT
+		person_id,
+		age_fixed,
+		age_fix_status,
+		CASE
+			WHEN age_fixed = delta THEN make_date(birthyear, 1, 1)
+			WHEN age_fixed = delta - 1 THEN (t_md_in_yob + INTERVAL '1 day')::date
+			WHEN age_fixed IS NULL THEN make_date(birthyear, 1, 1)
+		END AS dob_min,
+		CASE
+			WHEN age_fixed = delta THEN t_md_in_yob
+			WHEN age_fixed = delta - 1 THEN make_date(birthyear, 12, 31)
+			WHEN age_fixed IS NULL THEN make_date(birthyear, 12, 31)
+		END AS dob_max
+	FROM
+		anchor
+)
 -- Main query --
 SELECT 
 	pi."Patient_Identifier",
 	c.patient_id,
 	c.intake_encounter_id,
-	pdd.age AS age_current,
-	CASE 
-		WHEN pdd.age::int <= 3 THEN '0-3'
-		WHEN pdd.age::int >= 4 AND pdd.age::int <= 7 THEN '04-07'
-		WHEN pdd.age::int >= 8 AND pdd.age::int <= 14 THEN '08-14'
-		WHEN pdd.age::int >= 15 AND pdd.age::int <= 17 THEN '15-17'
-		WHEN pdd.age::int >= 18 AND pdd.age::int <= 59 THEN '18-59'
-		WHEN pdd.age::int >= 60 THEN '60+'
+	ab.age_fixed::int AS age_current,
+	CASE
+		WHEN ab.age_fixed::int <= 3 THEN '0-3'
+		WHEN ab.age_fixed::int >= 4
+		AND ab.age_fixed::int <= 7 THEN '04-07'
+		WHEN ab.age_fixed::int >= 8
+		AND ab.age_fixed::int <= 14 THEN '08-14'
+		WHEN ab.age_fixed::int >= 15
+		AND ab.age_fixed::int <= 17 THEN '15-17'
+		WHEN ab.age_fixed::int >= 18
+		AND ab.age_fixed::int <= 59 THEN '18-59'
+		WHEN ab.age_fixed::int >= 60 THEN '60+'
 		ELSE NULL
 	END AS age_group_current,
-	EXTRACT(YEAR FROM (SELECT age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))) AS age_admission,
-	CASE 
-		WHEN EXTRACT(YEAR FROM (SELECT age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))))::int <= 3 THEN '0-3'
-		WHEN EXTRACT(YEAR FROM (SELECT age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))))::int >= 4 AND EXTRACT(YEAR FROM (SELECT age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))) <= 7 THEN '04-07'
-		WHEN EXTRACT(YEAR FROM (SELECT age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))))::int >= 8 AND EXTRACT(YEAR FROM (SELECT age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))) <= 14 THEN '08-14'
-		WHEN EXTRACT(YEAR FROM (SELECT age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))))::int >= 15 AND EXTRACT(YEAR FROM (SELECT age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))) <= 17 THEN '15-17'
-		WHEN EXTRACT(YEAR FROM (SELECT age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))))::int >= 18 AND EXTRACT(YEAR FROM (SELECT age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')))) <= 59 THEN '18-59'
-		WHEN EXTRACT(YEAR FROM (SELECT age(ped.encounter_datetime, TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy'))))::int >= 60 THEN '60+'
+	(((c.intake_date - ab.dob_min) + (c.intake_date - ab.dob_max))::numeric / (2 * 365.2425))::int AS age_admission, 
+	CASE
+		WHEN (((c.intake_date - ab.dob_min) + (c.intake_date - ab.dob_max))::numeric / (2 * 365.2425))::int  <= 3 THEN '0-3'
+		WHEN (((c.intake_date - ab.dob_min) + (c.intake_date - ab.dob_max))::numeric / (2 * 365.2425))::int  >= 4
+		AND (((c.intake_date - ab.dob_min) + (c.intake_date - ab.dob_max))::numeric / (2 * 365.2425))::int  <= 7 THEN '04-07'
+		WHEN (((c.intake_date - ab.dob_min) + (c.intake_date - ab.dob_max))::numeric / (2 * 365.2425))::int  >= 8
+		AND (((c.intake_date - ab.dob_min) + (c.intake_date - ab.dob_max))::numeric / (2 * 365.2425))::int  <= 14 THEN '08-14'
+		WHEN (((c.intake_date - ab.dob_min) + (c.intake_date - ab.dob_max))::numeric / (2 * 365.2425))::int  >= 15
+		AND (((c.intake_date - ab.dob_min) + (c.intake_date - ab.dob_max))::numeric / (2 * 365.2425))::int  <= 17 THEN '15-17'
+		WHEN (((c.intake_date - ab.dob_min) + (c.intake_date - ab.dob_max))::numeric / (2 * 365.2425))::int  >= 18
+		AND (((c.intake_date - ab.dob_min) + (c.intake_date - ab.dob_max))::numeric / (2 * 365.2425))::int  <= 59 THEN '18-59'
+		WHEN (((c.intake_date - ab.dob_min) + (c.intake_date - ab.dob_max))::numeric / (2 * 365.2425))::int  >= 60 THEN '60+'
 		ELSE NULL
 	END AS age_group_admission,
 	pdd.gender,
@@ -121,6 +189,8 @@ LEFT OUTER JOIN first_clinician_initial_assessment fcia
 	ON c.intake_encounter_id = fcia.intake_encounter_id
 LEFT OUTER JOIN patient_identifier pi
 	ON c.patient_id = pi.patient_id
+LEFT OUTER JOIN age_bounds ab 
+	ON c.patient_id = ab.person_id
 LEFT OUTER JOIN person_details_default pdd 
 	ON c.patient_id = pdd.person_id
 LEFT OUTER JOIN patient_encounter_details_default ped 
