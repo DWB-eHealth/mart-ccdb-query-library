@@ -403,6 +403,7 @@ END AS status,
 	mhdc.other_mh AS "diagnosis: other mental health diagnosis",
 	mhd.visit_location AS discharge_visit_location,
 	mhd.intervention_setting AS discharge_intervention_setting,
+	mhi.intervention_setting AS intake_intervention_setting,
 	mhd.type_of_activity AS discharge_type_of_activity,
 	mhd.mhos_at_discharge,
 	mhd.cgi_s_score_at_discharge,
@@ -434,7 +435,6 @@ LEFT OUTER JOIN first_psy_initial_assessment fpia
 	ON c.intake_encounter_id = fpia.intake_encounter_id
 LEFT OUTER JOIN first_clinician_initial_assessment fcia
 	ON c.intake_encounter_id = fcia.intake_encounter_id
--- New join added
 LEFT OUTER JOIN first_psy_fup_assessment pcfp
 	ON c.intake_encounter_id = pcfp.intake_encounter_id
 LEFT OUTER JOIN mental_health_intake mhi
