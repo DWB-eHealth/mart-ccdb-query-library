@@ -91,7 +91,7 @@ visits_ordered AS (
 		s.dose_escalation,
 		s.toxicity,
 		s.stop_treatment,
-		s.phq4_score,
+		s.phq4_result,
 		s.integrated_to_mh_program,
 		s.next_medical_appointment_date,
 		ROW_NUMBER() OVER (
@@ -355,14 +355,14 @@ last_mh_screening AS (
 	SELECT
 		initial_encounter_id,
 		last_date_mh_screening,
-		last_phq4_score,
+		last_phq4_result,
 		integrated_to_mh_program
 	FROM
 		(
 			SELECT
 				initial_encounter_id,
 				scd_date_of_visit AS last_date_mh_screening,
-				phq4_score AS last_phq4_score,
+				phq4_result AS last_phq4_result,
 				integrated_to_mh_program,
 				ROW_NUMBER() OVER (
 					PARTITION BY initial_encounter_id
@@ -372,7 +372,7 @@ last_mh_screening AS (
 			FROM
 				visits_ordered vo
 			WHERE
-				phq4_score IS NOT NULL
+				phq4_result IS NOT NULL
 		) mh
 	WHERE
 		rn = 1
@@ -569,151 +569,35 @@ medication_list_ongoing AS (
 		ongoing = 1
 	GROUP BY
 		initial_encounter_id
-) -- *Main query* --
+)
+ -- *Main query* --
 SELECT
 	pi."Patient_Identifier",
 	c.patient_id,
 	c.initial_encounter_id,
 	pa."patientFileNumber",
-	pdd.age AS age_current,
+	EXTRACT('YEAR' FROM AGE(CURRENT_DATE, pdd.birthdate))::INT AS age_current,
 	CASE
-		WHEN pdd.age :: INT <= 4 THEN '0-4'
-		WHEN pdd.age :: INT >= 5
-		AND pdd.age :: INT <= 14 THEN '05-14'
-		WHEN pdd.age :: INT >= 15
-		AND pdd.age :: INT <= 24 THEN '15-24'
-		WHEN pdd.age :: INT >= 25
-		AND pdd.age :: INT <= 34 THEN '25-34'
-		WHEN pdd.age :: INT >= 35
-		AND pdd.age :: INT <= 44 THEN '35-44'
-		WHEN pdd.age :: INT >= 45
-		AND pdd.age :: INT <= 54 THEN '45-54'
-		WHEN pdd.age :: INT >= 55
-		AND pdd.age :: INT <= 64 THEN '55-64'
-		WHEN pdd.age :: INT >= 65 THEN '65+'
+		WHEN (EXTRACT('YEAR' FROM AGE(CURRENT_DATE, pdd.birthdate)))::INT <= 4 THEN '0-4'
+		WHEN (EXTRACT('YEAR' FROM AGE(CURRENT_DATE, pdd.birthdate)))::INT >= 5
+		AND (EXTRACT('YEAR' FROM AGE(CURRENT_DATE, pdd.birthdate)))::INT <= 9 THEN '05-9'
+		WHEN (EXTRACT('YEAR' FROM AGE(CURRENT_DATE, pdd.birthdate)))::INT >= 10
+		AND (EXTRACT('YEAR' FROM AGE(CURRENT_DATE, pdd.birthdate)))::INT <= 14 THEN '10-14'
+		WHEN (EXTRACT('YEAR' FROM AGE(CURRENT_DATE, pdd.birthdate)))::INT >= 15
+		AND (EXTRACT('YEAR' FROM AGE(CURRENT_DATE, pdd.birthdate)))::INT <= 19 THEN '15-19'
+		WHEN (EXTRACT('YEAR' FROM AGE(CURRENT_DATE, pdd.birthdate)))::INT >= 20 THEN '20+'
 		ELSE NULL
 	END AS age_group_current,
-	EXTRACT(
-		YEAR
-		FROM
-			age(
-				ped.encounter_datetime,
-				TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-			)
-	) AS age_admission,
+	EXTRACT('YEAR' FROM AGE(c.initial_visit_date, pdd.birthdate))::INT AS age_admission,
 	CASE
-		WHEN EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) :: INT <= 4 THEN '0-4'
-		WHEN EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) :: INT >= 5
-		AND EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) <= 14 THEN '05-14'
-		WHEN EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) :: INT >= 15
-		AND EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) <= 24 THEN '15-24'
-		WHEN EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) :: INT >= 25
-		AND EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) <= 34 THEN '25-34'
-		WHEN EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) :: INT >= 35
-		AND EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) <= 44 THEN '35-44'
-		WHEN EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) :: INT >= 45
-		AND EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) <= 54 THEN '45-54'
-		WHEN EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) :: INT >= 55
-		AND EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) <= 64 THEN '55-64'
-		WHEN EXTRACT(
-			YEAR
-			FROM
-				age(
-					ped.encounter_datetime,
-					TO_DATE(CONCAT('01-01-', pdd.birthyear), 'dd-MM-yyyy')
-				)
-		) :: INT >= 65 THEN '65+'
+		WHEN (EXTRACT('YEAR' FROM AGE(c.initial_visit_date, pdd.birthdate)))::INT <= 4 THEN '0-4'
+		WHEN (EXTRACT('YEAR' FROM AGE(c.initial_visit_date, pdd.birthdate)))::INT >= 5
+		AND (EXTRACT('YEAR' FROM AGE(c.initial_visit_date, pdd.birthdate)))::INT <= 9 THEN '05-9'
+		WHEN (EXTRACT('YEAR' FROM AGE(c.initial_visit_date, pdd.birthdate)))::INT >= 10
+		AND (EXTRACT('YEAR' FROM AGE(c.initial_visit_date, pdd.birthdate)))::INT <= 14 THEN '10-14'
+		WHEN (EXTRACT('YEAR' FROM AGE(c.initial_visit_date, pdd.birthdate)))::INT >= 15
+		AND (EXTRACT('YEAR' FROM AGE(c.initial_visit_date, pdd.birthdate)))::INT <= 19 THEN '15-19'
+		WHEN (EXTRACT('YEAR' FROM AGE(c.initial_visit_date, pdd.birthdate)))::INT >= 20 THEN '20+'
 		ELSE NULL
 	END AS age_group_admission,
 	pdd.gender,
@@ -768,7 +652,7 @@ SELECT
 	vo.visit_type AS last_visit_type,
 	vo.scd_visit_location AS last_visit_location,
 	vo.currently_pregnant,
-	vo.estimated_date_of_delivry,
+	vo.estimated_date_of_delivry AS estimated_date_of_delivery,
 	vo.breastfeeding,
 	vo.date_of_last_menstrual_period,
 	vo.contraceptive_taken,
@@ -784,7 +668,7 @@ SELECT
 	cl.complications,
 	lnc.date_last_complication,
 	vl.vaccinations,
-	lsel.side_effects,
+	lsel.side_effects AS hu_side_effects,
 	bb.first_bmi_date,
 	bb.first_bmi,
 	bm.first_muac_date,
@@ -796,7 +680,7 @@ SELECT
 	lbt.last_date_blood_transfusion,
 	lbt.last_blood_transfusion,
 	lms.last_date_mh_screening,
-	lms.last_phq4_score,
+	lms.last_phq4_result,
 	lms.integrated_to_mh_program,
 	lb.last_bmi_date,
 	lb.last_bmi,
@@ -815,7 +699,6 @@ FROM
 	LEFT OUTER JOIN patient_identifier pi ON c.patient_id = pi.patient_id
 	LEFT OUTER JOIN person_attributes pa ON c.patient_id = pa.person_id
 	LEFT OUTER JOIN person_details_default pdd ON c.patient_id = pdd.person_id
-	LEFT OUTER JOIN patient_encounter_details_default ped ON c.initial_encounter_id = ped.encounter_id
 	LEFT OUTER JOIN person_address_default pad ON c.patient_id = pad.person_id
 	LEFT OUTER JOIN (
 		SELECT
