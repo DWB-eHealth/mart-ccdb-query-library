@@ -298,7 +298,20 @@ SELECT
 			'Hypertension Stage 3'
 		) THEN 'Hypertension'
 		ELSE cd.diagnosis
-	END AS diagnosis_simplified
+	END AS diagnosis_simplified,
+		CASE
+		WHEN cd.diagnosis IN (
+			'Focal epilepsy',
+			'Generalised epilepsy',
+			'Unclassified epilepsy'
+		) THEN 'Epilepsy'
+		WHEN cd.diagnosis IN (
+			'Hypertension Stage 1',
+			'Hypertension Stage 2',
+			'Hypertension Stage 3'
+		) THEN 'Hypertension'
+		ELSE cd.diagnosis
+	END AS diagnosis_simplified_2
 FROM
 	cohort_diagnosis cd
 LEFT OUTER JOIN cohort c
