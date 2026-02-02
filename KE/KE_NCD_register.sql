@@ -1739,10 +1739,6 @@ SELECT
 	CASE
 		WHEN lhba1c.last_hba1c < 8 THEN 'Yes'
 		WHEN lhba1c.last_hba1c >= 8 THEN 'No'
-		WHEN lhba1c.last_hba1c IS NULL
-		AND lfbg.last_fbg < 8.3 THEN 'Yes'
-		WHEN lhba1c.last_hba1c IS NULL
-		AND lfbg.last_fbg >= 8.3 THEN 'No'
 	END AS diabetes_control,
 	lgfr.last_gfr_date,
 	lgfr.last_gfr,
