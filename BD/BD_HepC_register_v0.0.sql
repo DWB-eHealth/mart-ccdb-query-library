@@ -133,7 +133,7 @@ treatment_order AS (
 	LEFT OUTER JOIN cohort c
 		ON c.patient_id = hc.patient_id AND c.initial_visit_date <= hc.date::date AND (c.next_initial_visit_date IS NULL OR c.next_initial_visit_date >= hc.date::date)
 	WHERE hc.treatment_start_date IS NOT NULL AND hc.medication_duration IS NOT NULL AND hc.hepatitis_c_treatment_choice IS NOT NULL
-	ORDER BY hc.patient_id, c.initial_encounter_id, hc.treatment_start_date, hc.medication_duration, hepatitis_c_treatment_choice, hc.date::date ASC),
+	ORDER BY hc.patient_id, c.initial_encounter_id, hc.treatment_start_date, hc.medication_duration, hc.hepatitis_c_treatment_choice, hc.date::date ASC),
 treatment_secondary AS (
 		SELECT
 			DISTINCT ON (patient_id, initial_encounter_id) patient_id,
