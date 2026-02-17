@@ -274,7 +274,7 @@ prep_visit_cards_raw AS (
         ROW_NUMBER() OVER (PARTITION BY pvc.patient_id ORDER BY pvc.prep_visit_date ASC) AS rn_first,
         ROW_NUMBER() OVER (PARTITION BY pvc.patient_id ORDER BY pvc.prep_visit_date DESC) AS rn_last,
         ROW_NUMBER() OVER (PARTITION BY pvc.patient_id ORDER BY pvc.prep_visit_date DESC) AS rn_before_last
-    FROM "4_prep_visit_card" pvc
+    FROM "4_prep_log_book" pvc
     WHERE pvc.prep_visit_date IS NOT NULL
 ),
 final_prep_visits AS (
@@ -443,4 +443,5 @@ FROM
 WHERE
     pi."Patient_Identifier" IS NOT NULL
 ORDER BY
+
     pi.patient_id;
