@@ -12,17 +12,17 @@ WITH cohort AS (
 			SELECT
 				patient_id,
 				encounter_id AS initial_encounter_id,
-				scd_visit_location AS initial_visit_location,
-				scd_date_of_visit AS initial_visit_date,
+				visit_location AS initial_visit_location,
+				date_of_visit AS initial_visit_date,
 				DENSE_RANK () OVER (
 					PARTITION BY patient_id
 					ORDER BY
-						scd_date_of_visit
+						date_of_visit
 				) AS initial_visit_order,
-				LEAD (scd_date_of_visit) OVER (
+				LEAD (date_of_visit) OVER (
 					PARTITION BY patient_id
 					ORDER BY
-						scd_date_of_visit
+						date_of_visit
 				) AS next_initial_visit_date
 			FROM
 				scd
@@ -33,7 +33,7 @@ WITH cohort AS (
 			SELECT
 				patient_id,
 				encounter_id,
-				COALESCE(discharge_date, scd_date_of_visit) AS discharge_date2,
+				COALESCE(discharge_date, date_of_visit) AS discharge_date2,
 				discharge_status
 			FROM
 				scd
