@@ -19,17 +19,17 @@ WITH cohort AS (
 			SELECT
 				patient_id,
 				encounter_id AS initial_encounter_id,
-				scd_visit_location AS initial_visit_location,
-				scd_date_of_visit AS initial_visit_date,
+				visit_location AS initial_visit_location,
+				date_of_visit AS initial_visit_date,
 				DENSE_RANK () OVER (
 					PARTITION BY patient_id
 					ORDER BY
-						scd_date_of_visit
+						date_of_visit
 				) AS initial_visit_order,
-				LEAD (scd_date_of_visit) OVER (
+				LEAD (date_of_visit) OVER (
 					PARTITION BY patient_id
 					ORDER BY
-						scd_date_of_visit
+						date_of_visit
 				) AS next_initial_visit_date
 			FROM
 				scd
@@ -40,7 +40,7 @@ WITH cohort AS (
 			SELECT
 				patient_id,
 				encounter_id,
-				COALESCE(discharge_date, scd_date_of_visit) AS discharge_date2,
+				COALESCE(discharge_date, date_of_visit) AS discharge_date2,
 				discharge_status,
 				reason_for_lost_of_follow_up,
 				transfer_location
@@ -67,9 +67,9 @@ visits_ordered AS (
 		s.patient_id,
 		c.initial_encounter_id,
 		s.encounter_id,
-		s.scd_date_of_visit,
+		s.date_of_visit,
 		s.visit_type,
-		s.scd_visit_location,
+		s.visit_location,
 		s.source_of_information,
 		s.previous_scd_diagnosis,
 		s.previous_scd_diagnosis_date,
@@ -79,12 +79,12 @@ visits_ordered AS (
 		s.method_of_diagnosis,
 		s.blood_group,
 		s.currently_pregnant,
-		s.estimated_date_of_delivry,
+		s.estimated_date_of_delivery,
 		s.breastfeeding,
 		s.date_of_last_menstrual_period,
 		s.contraceptive_taken,
 		s.contraceptive_method,
-		s.previous_blood_transfusion,
+		s.blood_transfusion_since_last_visit,
 		s.patient_under_hydroxyurea_treatment,
 		s.hydroxyurea_compliance_since_last_visit,
 		s.therapeutic_dose_reached,
@@ -97,18 +97,18 @@ visits_ordered AS (
 		ROW_NUMBER() OVER (
 			PARTITION BY c.initial_encounter_id
 			ORDER BY
-				s.scd_date_of_visit DESC
+				s.date_of_visit DESC
 		) AS rn_desc,
 		ROW_NUMBER() OVER (
 			PARTITION BY c.initial_encounter_id
 			ORDER BY
-				s.scd_date_of_visit
+				s.date_of_visit
 		) AS rn_asc
 	FROM
 		scd s
 		LEFT OUTER JOIN cohort c ON s.patient_id = c.patient_id
-		AND s.scd_date_of_visit >= c.initial_visit_date
-		AND s.scd_date_of_visit <= COALESCE(c.discharge_date, CURRENT_DATE)
+		AND s.date_of_visit >= c.initial_visit_date
+		AND s.date_of_visit <= COALESCE(c.discharge_date, CURRENT_DATE)
 	WHERE
 		s.visit_type != 'Discharge visit'
 ),
@@ -148,16 +148,16 @@ complication_list AS (
 last_new_complication AS (
 	SELECT
 		initial_encounter_id,
-		scd_date_of_visit AS date_last_complication
+		date_of_visit AS date_last_complication
 	FROM
 		(
 			SELECT
 				vo.initial_encounter_id,
-				vo.scd_date_of_visit,
+				vo.date_of_visit,
 				ROW_NUMBER() OVER (
 					PARTITION BY vo.initial_encounter_id
 					ORDER BY
-						vo.scd_date_of_visit DESC
+						vo.date_of_visit DESC
 				) AS rn_desc
 			FROM
 				visits_ordered vo
@@ -310,12 +310,12 @@ last_blood_group AS (
 		(
 			SELECT
 				initial_encounter_id,
-				scd_date_of_visit AS last_date_blood_group,
+				date_of_visit AS last_date_blood_group,
 				blood_group AS last_blood_group,
 				ROW_NUMBER() OVER (
 					PARTITION BY initial_encounter_id
 					ORDER BY
-						scd_date_of_visit DESC
+						date_of_visit DESC
 				) AS rn
 			FROM
 				visits_ordered vo
@@ -335,17 +335,17 @@ last_blood_transfusion AS (
 		(
 			SELECT
 				initial_encounter_id,
-				scd_date_of_visit AS last_date_blood_transfusion,
-				previous_blood_transfusion AS last_blood_transfusion,
+				date_of_visit AS last_date_blood_transfusion,
+				blood_transfusion_since_last_visit AS last_blood_transfusion,
 				ROW_NUMBER() OVER (
 					PARTITION BY initial_encounter_id
 					ORDER BY
-						scd_date_of_visit DESC
+						date_of_visit DESC
 				) AS rn
 			FROM
 				visits_ordered vo
 			WHERE
-				previous_blood_transfusion = 'Yes'
+				blood_transfusion_since_last_visit = 'Yes'
 		) foot
 	WHERE
 		rn = 1
@@ -361,13 +361,13 @@ last_mh_screening AS (
 		(
 			SELECT
 				initial_encounter_id,
-				scd_date_of_visit AS last_date_mh_screening,
+				date_of_visit AS last_date_mh_screening,
 				phq4_result AS last_phq4_result,
 				integrated_to_mh_program,
 				ROW_NUMBER() OVER (
 					PARTITION BY initial_encounter_id
 					ORDER BY
-						scd_date_of_visit DESC
+						date_of_visit DESC
 				) AS rn
 			FROM
 				visits_ordered vo
@@ -647,12 +647,12 @@ SELECT
 	c.discharge_status,
 	c.reason_for_lost_of_follow_up,
 	c.transfer_location,
-	vo.scd_date_of_visit AS last_visit_date,
-	(CURRENT_DATE - vo.scd_date_of_visit) AS days_since_last_visit,
+	vo.date_of_visit AS last_visit_date,
+	(CURRENT_DATE - vo.date_of_visit) AS days_since_last_visit,
 	vo.visit_type AS last_visit_type,
-	vo.scd_visit_location AS last_visit_location,
+	vo.visit_location AS last_visit_location,
 	vo.currently_pregnant,
-	vo.estimated_date_of_delivry AS estimated_date_of_delivery,
+	vo.estimated_date_of_delivery,
 	vo.breastfeeding,
 	vo.date_of_last_menstrual_period,
 	vo.contraceptive_taken,
@@ -703,9 +703,9 @@ FROM
 	LEFT OUTER JOIN (
 		SELECT
 			initial_encounter_id,
-			scd_date_of_visit,
+			date_of_visit,
 			visit_type,
-			scd_visit_location,
+			visit_location,
 			source_of_information,
 			previous_scd_diagnosis,
 			previous_scd_diagnosis_date,
@@ -721,11 +721,11 @@ FROM
 	LEFT OUTER JOIN (
 		SELECT
 			initial_encounter_id,
-			scd_date_of_visit,
+			date_of_visit,
 			visit_type,
-			scd_visit_location,
+			visit_location,
 			currently_pregnant,
-			estimated_date_of_delivry,
+			estimated_date_of_delivery,
 			breastfeeding,
 			date_of_last_menstrual_period,
 			contraceptive_taken,
