@@ -9,52 +9,95 @@ cohorte AS (
 	FROM inclusion i
 	LEFT JOIN (SELECT patient_id, encounter_id, COALESCE(date_de_sortie, date) AS date_de_sortie, statut_de_sortie FROM mnt_vih_tb WHERE type_de_visite = 'Sortie') d 
 		ON i.patient_id = d.patient_id AND d.date_de_sortie >= i.date_inclusion AND (d.date_de_sortie < i.date_inclusion_suivi OR i.date_inclusion_suivi IS NULL)),
--- The PTPE CTE looks at if the patient has a PTPE form completed. 
-dernière_ptpe AS (
-	SELECT patient_id, encounter_id_inclusion, date_derniere_ptpe
+-- The dernière_mnt CTE looks at if the patient has a mnt_vih_tb form completed and when was the last date. 
+dernière_mnt AS (
+	SELECT patient_id, encounter_id_inclusion, date AS date_dernière_visite, type_de_visite
 	FROM (
 		SELECT
 			c.patient_id, 
 			c.encounter_id_inclusion, 
-			ptpe.date AS date_derniere_ptpe,
+			COALESCE(mnt.date_de_sortie, mnt.date) AS date,
+			mnt.type_de_visite,
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY COALESCE(mnt.date_de_sortie, mnt.date) DESC) AS rn
+		FROM cohorte c
+		LEFT OUTER JOIN mnt_vih_tb mnt
+			ON c.patient_id = mnt.patient_id AND c.date_inclusion <= COALESCE(mnt.date_de_sortie, mnt.date)::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= COALESCE(mnt.date_de_sortie, mnt.date)::date
+		WHERE mnt.patient_id IS NOT NULL) foo
+	WHERE rn = 1),
+-- The dernière_ptpe CTE looks at if the patient has a PTPE form completed and when was the last date. 
+dernière_ptpe AS (
+	SELECT patient_id, encounter_id_inclusion, date AS date_dernière_visite, type_de_visite
+	FROM (
+		SELECT
+			c.patient_id, 
+			c.encounter_id_inclusion, 
+			ptpe.date,
+			ptpe.type_de_visite,
 			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY ptpe.date DESC) AS rn
 		FROM cohorte c
 		LEFT OUTER JOIN ptpe
-			ON c.patient_id = ptpe.patient_id AND c.date_inclusion <= ptpe.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= ptpe.date::date) foo
+			ON c.patient_id = ptpe.patient_id AND c.date_inclusion <= ptpe.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= ptpe.date::date
+		WHERE ptpe.patient_id IS NOT NULL) foo
 	WHERE rn = 1),
--- The last completed form CTE looks at the last date and type of visit for each patient based on the clinical forms (including MNT VIH TB, PTPE).
-dernière_fiche AS (
+-- The nbr_mnt CTE counts the number of MNT VIH TB forms completed during the cohort enrollment.
+nbr_mnt AS (
 	SELECT 
-		DISTINCT ON (c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie) c.encounter_id_inclusion,
-		forms.date AS date_derniere_visite,
-		forms.dernière_fiche_type,
-		CASE WHEN forms.form_field_path = 'NCD2' THEN 'MNT/VIH/TB' WHEN forms.form_field_path = 'PMTCT' THEN 'PTPE' ELSE NULL END AS type_derniere_fiche
+		DISTINCT ON (c.patient_id, c.encounter_id_inclusion) c.encounter_id_inclusion,
+		COUNT(*) AS nombre_mnt
 	FROM cohorte c
-	LEFT OUTER JOIN (SELECT patient_id, COALESCE(date_de_sortie, date) AS date, type_de_visite AS dernière_fiche_type, form_field_path FROM mnt_vih_tb UNION SELECT patient_id, date, type_de_visite AS dernière_fiche_type, form_field_path FROM ptpe) forms
-		ON c.patient_id = forms.patient_id AND c.date_inclusion <= forms.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= forms.date::date
-	GROUP BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, forms.date, forms.dernière_fiche_type, forms.form_field_path
-	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, forms.form_field_path, forms.date DESC),
+	LEFT OUTER JOIN mnt_vih_tb mnt
+		ON c.patient_id = mnt.patient_id AND c.date_inclusion <= COALESCE(mnt.date_de_sortie, mnt.date)::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= COALESCE(mnt.date_de_sortie, mnt.date)::date
+	GROUP BY c.patient_id, c.encounter_id_inclusion),
+-- The nbr_ptpe CTE counts the number of ptpe forms completed during the cohort enrollment.
+nbr_ptpe AS (
+	SELECT 
+		DISTINCT ON (c.patient_id, c.encounter_id_inclusion) c.encounter_id_inclusion,
+		COUNT(*) AS nombre_ptpe
+	FROM cohorte c
+	LEFT OUTER JOIN ptpe
+		ON c.patient_id = ptpe.patient_id AND c.date_inclusion <= ptpe.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= ptpe.date::date
+	GROUP BY c.patient_id, c.encounter_id_inclusion),
+-- The dernière_fiche CTE looks at the last date, type of visit, and file type for each patient based on the clinical forms completed (includes MNT VIH TB and PTPE).
+dernière_fiche AS (
+	SELECT patient_id, encounter_id_inclusion, date AS date_dernière_visite, type_de_visite AS dernière_type_visite, fiche_type AS dernière_fiche_type
+	FROM (
+		SELECT 
+			c.patient_id, 
+			c.encounter_id_inclusion,
+			forms.date,
+			forms.type_de_visite AS type_de_visite,
+			CASE WHEN forms.form_field_path = 'NCD2' THEN 'MNT/VIH/TB' WHEN forms.form_field_path = 'PMTCT' THEN 'PTPE' ELSE NULL END AS fiche_type,
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY forms.date DESC, CASE WHEN forms.form_field_path = 'PMTCT' THEN 1 WHEN forms.form_field_path = 'NCD2' THEN 2 ELSE NULL END) AS rn
+		FROM cohorte c
+		LEFT OUTER JOIN (SELECT patient_id, COALESCE(date_de_sortie, date) AS date, type_de_visite, form_field_path FROM mnt_vih_tb UNION SELECT patient_id, date, type_de_visite, form_field_path FROM ptpe) forms
+			ON c.patient_id = forms.patient_id AND c.date_inclusion <= forms.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= forms.date::date) foo
+	WHERE rn = 1),
 -- The last visit location CTE finds the last visit location reported in clinical forms (including MNT VIH TB, PTPE).
 dernière_fiche_location AS (	
-	SELECT 
-		DISTINCT ON (c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie) c.encounter_id_inclusion,
-		forms.lieu_de_visite AS dernière_fiche_location
-	FROM cohorte c
-	LEFT OUTER JOIN (SELECT patient_id, COALESCE(date_de_sortie, date) AS date, lieu_de_visite FROM mnt_vih_tb UNION 
-	SELECT patient_id, date, lieu_de_visite FROM ptpe) forms
-		ON c.patient_id = forms.patient_id AND c.date_inclusion <= forms.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= forms.date::date
-	WHERE forms.lieu_de_visite IS NOT NULL
-	GROUP BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, forms.date, forms.lieu_de_visite
-	ORDER BY c.patient_id, c.encounter_id_inclusion, c.date_inclusion, c.date_de_sortie, forms.date DESC),
+	SELECT patient_id, encounter_id_inclusion, lieu_de_visite AS dernière_fiche_location
+	FROM (
+		SELECT 
+			c.patient_id, 
+			c.encounter_id_inclusion,
+			forms.lieu_de_visite,
+			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY forms.date DESC, CASE WHEN forms.form_field_path = 'PMTCT' THEN 1 WHEN forms.form_field_path = 'NCD2' THEN 2 ELSE NULL END) AS rn
+		FROM cohorte c
+		LEFT OUTER JOIN (SELECT patient_id, COALESCE(date_de_sortie, date) AS date, lieu_de_visite, form_field_path FROM mnt_vih_tb WHERE lieu_de_visite IS NOT NULL UNION 
+		SELECT patient_id, date, lieu_de_visite, form_field_path FROM ptpe WHERE lieu_de_visite IS NOT NULL) forms
+			ON c.patient_id = forms.patient_id AND c.date_inclusion <= forms.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= forms.date::date) foo
+	WHERE rn = 1),
 -- The diagnosis CTEs select the last reported diagnosis per cohort enrollment, both listing and pivoting the data horizonally. The pivoted diagnosis data is presented with the date the diagnosis was first reported.
 diagnostic_cohorte_dates AS (
-    SELECT 
-        d.patient_id, c.encounter_id_inclusion, d.diagnostic, MIN(n.date) AS first_date, MAX(n.date) AS last_date
-    FROM diagnostic d
-    LEFT JOIN mnt_vih_tb n USING(encounter_id)
-    LEFT JOIN cohorte c 
-        ON d.patient_id = c.patient_id AND c.date_inclusion <= n.date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= n.date
-    GROUP BY d.patient_id, c.encounter_id_inclusion, d.diagnostic),
+	SELECT
+		d.patient_id, c.encounter_id_inclusion, d.diagnostic, MIN(COALESCE(n.date_de_sortie, n.date)) AS first_date, MAX(COALESCE(n.date_de_sortie, n.date)) AS last_date
+	FROM
+		diagnostic d
+		LEFT JOIN mnt_vih_tb n USING(encounter_id)
+		LEFT JOIN cohorte c ON d.patient_id = c.patient_id
+		AND c.date_inclusion <= COALESCE(n.date_de_sortie, n.date)::date
+		AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= COALESCE(n.date_de_sortie, n.date)::date
+	GROUP BY
+		d.patient_id, c.encounter_id_inclusion, d.diagnostic),
 dernière_diagnostic_cohorte AS (
     SELECT 
         patient_id,
@@ -102,6 +145,19 @@ diagnostic_cohorte_liste AS (
 	SELECT encounter_id_inclusion, STRING_AGG(diagnostic, ', ') AS liste_diagnostic
 	FROM diagnostic_cohorte
 	GROUP BY encounter_id_inclusion),
+diagnostic_cohorte_liste_totale AS (
+	SELECT
+		encounter_id_inclusion,
+		STRING_AGG(
+			DISTINCT diagnostic,
+			', '
+			ORDER BY
+				diagnostic
+		) AS liste_diagnostic_totale
+	FROM
+		diagnostic_cohorte_dates
+	GROUP BY
+		encounter_id_inclusion),
 -- The comorbidités CTE selects all reported comorbidities per cohort enrollment, listing the data horizonally.
 comorbidités_cohorte AS (
 	SELECT
@@ -269,9 +325,7 @@ dernière_pression_artérielle AS (
           AND svil.tension_arterielle_systolique IS NOT NULL 
           AND svil.tension_arterielle_diastolique IS NOT NULL
     ) foo
-    WHERE rn = 1
-),
-
+    WHERE rn = 1),
 -- The last BMI CTE extracts the last BMI measurement reported per cohort enrollment.
 dernière_imc AS (
     SELECT patient_id, encounter_id_inclusion, date_dernière_imc, dernière_imc
@@ -290,9 +344,7 @@ dernière_imc AS (
         WHERE svil.date_heure_enregistrée IS NOT NULL 
           AND svil.indice_de_masse_corporelle IS NOT NULL
     ) foo
-    WHERE rn = 1
-),
-
+    WHERE rn = 1),
 -- The last HbA1c CTE extracts the last HbA1c measurement reported per cohort enrollment.
 dernière_hba1c AS (
     SELECT patient_id, encounter_id_inclusion, date_dernière_hba1c, dernière_hba1c
@@ -311,9 +363,7 @@ dernière_hba1c AS (
         WHERE COALESCE(svil.date_de_prélèvement, svil.date_heure_enregistrée) IS NOT NULL 
           AND svil.hba1c IS NOT NULL
     ) foo
-    WHERE rn = 1
-),
-
+    WHERE rn = 1),
 -- The last glycémie CTE extracts the last glycémie measurement reported per cohort enrollment.
 dernière_glycémie AS (
     SELECT patient_id, encounter_id_inclusion, date_dernière_glycémie, dernière_glycémie
@@ -332,9 +382,7 @@ dernière_glycémie AS (
         WHERE COALESCE(svil.date_de_prélèvement, svil.date_heure_enregistrée) IS NOT NULL 
           AND svil.glycémie_aléatoire IS NOT NULL
     ) foo
-    WHERE rn = 1
-),
-
+    WHERE rn = 1),
 -- The MNT VIH TB form CTE extracts the last MNT VIH TB visit data per cohort enrollment to look at if there are values reported for pregnancy, family planning, hospitalization, missed medication, seizures, or asthma/COPD exacerbations repoted at the last visit. 
 dernière_visite AS (
 	SELECT patient_id, encounter_id_inclusion, enceinte_dernière_visite, allaitante_dernière_visite, hospitalisé_signalée_dernière_visite, prise_de_médicaments_oubliée_signalée_dernière_visite, convulsions_signalée_dernière_visite, exacerbation_signalée_dernière_visite, nbr_exacerbation_signalée_dernière_visite
@@ -473,19 +521,21 @@ SELECT
 	CASE WHEN ((DATE_PART('year', CURRENT_DATE) - DATE_PART('year', c.date_inclusion)) * 12 + (DATE_PART('month', CURRENT_DATE) - DATE_PART('month', c.date_inclusion))) >= 12 AND c.date_de_sortie IS NULL THEN 'Oui' END AS en_cohorte_12m,
 	c.readmission,
 	c.lieu_de_visite_inclusion,
-	CASE WHEN dp.date_derniere_ptpe IS NOT NULL THEN 'Oui' ELSE NULL END AS ptpe,
 	lfl.dernière_fiche_location,
-	lf.date_derniere_visite,
+	dm.type_de_visite AS dernière_type_visite_mnt, 
+	dm.date_dernière_visite AS date_dernière_mnt,
+	CASE WHEN dp.date_dernière_visite IS NOT NULL THEN 'Oui' ELSE NULL END AS ptpe,
+	dp.date_dernière_visite AS date_dernière_ptpe,
 	lf.dernière_fiche_type,
-	dp.date_derniere_ptpe,
-	CASE WHEN GREATEST(
-         COALESCE(lf.date_derniere_visite, DATE '1900-01-01'),
-         COALESCE(dp.date_derniere_ptpe, DATE '1900-01-01')
-       ) < (CURRENT_DATE - INTERVAL '90 DAYS') THEN 'Oui'
-  WHEN lf.date_derniere_visite IS NULL AND dp.date_derniere_ptpe IS NULL
-    THEN 'Oui' -- aucun enregistrement => considéré sans visite
-  ELSE NULL
-END AS sans_visite_90j,
+	lf.dernière_type_visite,
+	lf.date_dernière_visite,
+	CASE
+		WHEN COALESCE(lf.date_dernière_visite, DATE '1900-01-01') < (CURRENT_DATE - INTERVAL '90 DAYS') THEN 'Oui'
+		WHEN lf.date_dernière_visite IS NULL THEN 'Oui' -- aucun enregistrement => considéré sans visite
+		ELSE NULL
+	END AS sans_visite_90j,
+	nm.nombre_mnt,
+	np.nombre_ptpe,
 	c.date_de_sortie,
 	c.statut_de_sortie,
 	CASE 
@@ -526,6 +576,7 @@ END AS sans_visite_90j,
 	lndx.troubles_de_santé_mentale,
 	lndx.autre_diagnostic,
 	lndl.liste_diagnostic,
+	dclt.liste_diagnostic_totale,
 	cmcl.liste_comorbidities,
 	frp.médecine_traditionnelle,
 	frp.tabagisme_passif,
@@ -579,16 +630,24 @@ LEFT OUTER JOIN person_attributes pa
 	ON c.patient_id = pa.person_id
 LEFT OUTER JOIN person_details_default pdd 
 	ON c.patient_id = pdd.person_id
+LEFT OUTER JOIN dernière_mnt dm 
+	ON c.patient_id = dm.patient_id
 LEFT OUTER JOIN dernière_ptpe dp
 	ON c.encounter_id_inclusion = dp.encounter_id_inclusion
 LEFT OUTER JOIN dernière_fiche lf
 	ON c.encounter_id_inclusion = lf.encounter_id_inclusion
 LEFT OUTER JOIN dernière_fiche_location lfl
 	ON c.encounter_id_inclusion = lfl.encounter_id_inclusion
+LEFT OUTER JOIN nbr_mnt nm
+	ON c.encounter_id_inclusion = nm.encounter_id_inclusion
+LEFT OUTER JOIN nbr_ptpe np
+	ON c.encounter_id_inclusion = np.encounter_id_inclusion	
 LEFT OUTER JOIN diagnostic_cohorte_pivot lndx
 	ON c.encounter_id_inclusion = lndx.encounter_id_inclusion
 LEFT OUTER JOIN diagnostic_cohorte_liste lndl
 	ON c.encounter_id_inclusion = lndl.encounter_id_inclusion
+LEFT OUTER JOIN diagnostic_cohorte_liste_totale dclt 
+	ON c.encounter_id_inclusion = dclt.encounter_id_inclusion
 LEFT OUTER JOIN comorbidités_cohorte_liste cmcl 
 	ON c.encounter_id_inclusion = cmcl.encounter_id_inclusion
 LEFT OUTER JOIN facteurs_risque_pivot frp 
