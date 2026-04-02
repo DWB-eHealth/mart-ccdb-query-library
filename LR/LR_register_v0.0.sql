@@ -298,6 +298,7 @@ last_visit_location AS (
 SELECT
 	pi."Patient_Identifier",
 	c.patient_id,
+	c.patient_id AS patient_id_dup,
 	c.intake_encounter_id,
 	pa."Patient_code",
 	pdd.age AS age_current,
