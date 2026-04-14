@@ -59,19 +59,59 @@ nbr_ptpe AS (
 	GROUP BY c.patient_id, c.encounter_id_inclusion),
 -- The dernière_fiche CTE looks at the last date, type of visit, and file type for each patient based on the clinical forms completed (includes MNT VIH TB and PTPE).
 dernière_fiche AS (
-	SELECT patient_id, encounter_id_inclusion, date AS date_dernière_visite, type_de_visite AS dernière_type_visite, fiche_type AS dernière_fiche_type
+	SELECT 
+		patient_id, 
+		encounter_id_inclusion, 
+		encounter_id,
+		date AS date_dernière_visite, 
+		type_de_visite AS dernière_type_visite, 
+		fiche_type AS dernière_fiche_type
 	FROM (
 		SELECT 
 			c.patient_id, 
 			c.encounter_id_inclusion,
+			forms.encounter_id,
 			forms.date,
-			forms.type_de_visite AS type_de_visite,
-			CASE WHEN forms.form_field_path = 'NCD2' THEN 'MNT/VIH/TB' WHEN forms.form_field_path = 'PMTCT' THEN 'PTPE' ELSE NULL END AS fiche_type,
-			ROW_NUMBER() OVER (PARTITION BY c.encounter_id_inclusion ORDER BY forms.date DESC, CASE WHEN forms.form_field_path = 'PMTCT' THEN 1 WHEN forms.form_field_path = 'NCD2' THEN 2 ELSE NULL END) AS rn
+			forms.type_de_visite,
+			CASE 
+				WHEN forms.form_field_path = 'NCD2' THEN 'MNT/VIH/TB' 
+				WHEN forms.form_field_path = 'PMTCT' THEN 'PTPE' 
+			END AS fiche_type,
+			ROW_NUMBER() OVER (
+				PARTITION BY c.encounter_id_inclusion 
+				ORDER BY 
+					forms.date DESC,
+					CASE 
+						WHEN forms.form_field_path = 'PMTCT' THEN 1 
+						WHEN forms.form_field_path = 'NCD2' THEN 2 
+					END
+			) AS rn
 		FROM cohorte c
-		LEFT OUTER JOIN (SELECT patient_id, COALESCE(date_de_sortie, date) AS date, type_de_visite, form_field_path FROM mnt_vih_tb UNION SELECT patient_id, date, type_de_visite, form_field_path FROM ptpe) forms
-			ON c.patient_id = forms.patient_id AND c.date_inclusion <= forms.date::date AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= forms.date::date) foo
-	WHERE rn = 1),
+		LEFT OUTER JOIN (
+			SELECT 
+				patient_id, 
+				encounter_id,
+				COALESCE(date_de_sortie, date) AS date, 
+				type_de_visite, 
+				form_field_path 
+			FROM mnt_vih_tb
+			
+			UNION
+			
+			SELECT 
+				patient_id, 
+				encounter_id,
+				date, 
+				type_de_visite, 
+				form_field_path 
+			FROM ptpe
+		) forms
+			ON c.patient_id = forms.patient_id 
+			AND c.date_inclusion <= forms.date::date 
+			AND COALESCE(c.date_de_sortie, CURRENT_DATE) >= forms.date::date
+	) foo
+	WHERE rn = 1
+),
 -- The last visit location CTE finds the last visit location reported in clinical forms (including MNT VIH TB, PTPE).
 dernière_fiche_location AS (	
 	SELECT patient_id, encounter_id_inclusion, lieu_de_visite AS dernière_fiche_location
@@ -515,11 +555,11 @@ SELECT
 		WHEN pa."Living_conditions" = 'Homeless' THEN 'Sans domicile fixe'
 		WHEN pa."Living_conditions" = 'Other' THEN 'Autre'
 	ELSE NULL END AS condition_habitation,
-	c.date_inclusion AS date_inclusion,
-	CASE WHEN c.date_de_sortie IS NULL THEN 'Oui' END AS en_cohorte,
+		CASE WHEN c.date_de_sortie IS NULL THEN 'Oui' END AS en_cohorte,
 	CASE WHEN ((DATE_PART('year', CURRENT_DATE) - DATE_PART('year', c.date_inclusion)) * 12 + (DATE_PART('month', CURRENT_DATE) - DATE_PART('month', c.date_inclusion))) >= 6 AND c.date_de_sortie IS NULL THEN 'Oui' END AS en_cohorte_6m,
 	CASE WHEN ((DATE_PART('year', CURRENT_DATE) - DATE_PART('year', c.date_inclusion)) * 12 + (DATE_PART('month', CURRENT_DATE) - DATE_PART('month', c.date_inclusion))) >= 12 AND c.date_de_sortie IS NULL THEN 'Oui' END AS en_cohorte_12m,
 	c.readmission,
+	c.date_inclusion AS date_inclusion,
 	c.lieu_de_visite_inclusion,
 	lfl.dernière_fiche_location,
 	dm.type_de_visite AS dernière_type_visite_mnt, 
@@ -528,6 +568,10 @@ SELECT
 	dp.date_dernière_visite AS date_dernière_ptpe,
 	lf.dernière_fiche_type,
 	lf.dernière_type_visite,
+CASE 
+	WHEN lf.dernière_fiche_type = 'MNT/VIH/TB' THEN mnt_last."prochain_rendez_vous_à_fixer"
+	WHEN lf.dernière_fiche_type = 'PTPE' THEN ptpe_last."prochain_rendez_vous_à_fixer"
+END AS "Dernier Prochain Rendez Vous",
 	lf.date_dernière_visite,
 	CASE
 		WHEN COALESCE(lf.date_dernière_visite, DATE '1900-01-01') < (CURRENT_DATE - INTERVAL '90 DAYS') THEN 'Oui'
@@ -679,4 +723,9 @@ LEFT OUTER JOIN dernière_gravité_asthme dga
 LEFT OUTER JOIN hospitalisé_dernière_6m hd6m 
 	ON c.encounter_id_inclusion = hd6m.encounter_id_inclusion
 	LEFT OUTER JOIN dernière_autocontrôle_glycémie dag
-    ON c.encounter_id_inclusion = dag.encounter_id_inclusion;
+    ON c.encounter_id_inclusion = dag.encounter_id_inclusion
+  LEFT OUTER JOIN mnt_vih_tb mnt_last
+	ON lf.encounter_id = mnt_last.encounter_id
+
+LEFT OUTER JOIN ptpe ptpe_last
+	ON lf.encounter_id = ptpe_last.encounter_id;
