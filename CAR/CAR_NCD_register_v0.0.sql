@@ -568,10 +568,12 @@ SELECT
 	dp.date_dernière_visite AS date_dernière_ptpe,
 	lf.dernière_fiche_type,
 	lf.dernière_type_visite,
-CASE 
-	WHEN lf.dernière_fiche_type = 'MNT/VIH/TB' THEN mnt_last."prochain_rendez_vous_à_fixer"
-	WHEN lf.dernière_fiche_type = 'PTPE' THEN ptpe_last."prochain_rendez_vous_à_fixer"
-END AS "Dernier Prochain Rendez Vous",
+CASE
+    WHEN lf.dernière_fiche_type = 'MNT/VIH/TB' 
+        THEN mnt_last."prochain_rendez_vous_à_fixer"::date
+    WHEN lf.dernière_fiche_type = 'PTPE' 
+        THEN ptpe_last."prochain_rendez_vous_à_fixer"::date
+END AS date_prochain_rendez_vous,
 	lf.date_dernière_visite,
 	CASE
 		WHEN COALESCE(lf.date_dernière_visite, DATE '1900-01-01') < (CURRENT_DATE - INTERVAL '90 DAYS') THEN 'Oui'
