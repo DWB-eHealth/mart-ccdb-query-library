@@ -584,18 +584,21 @@ END AS date_prochain_rendez_vous,
 	np.nombre_ptpe,
 	c.date_de_sortie,
 	c.statut_de_sortie,
-	CASE 
-		WHEN lndx.mnt IS NOT NULL AND lndx.tb IS NULL AND lndx.vih IS NULL AND lndx.troubles_de_santé_mentale IS NULL THEN 'MNT' 
-		WHEN lndx.mnt IS NULL AND lndx.tb IS NOT NULL AND lndx.vih IS NULL AND lndx.troubles_de_santé_mentale IS NULL THEN 'TB' 
-		WHEN lndx.mnt IS NULL AND lndx.tb IS NULL AND lndx.vih IS NOT NULL AND lndx.troubles_de_santé_mentale IS NULL THEN 'VIH' 
-		WHEN lndx.mnt IS NULL AND lndx.tb IS NULL AND lndx.vih IS NULL AND lndx.troubles_de_santé_mentale IS NOT NULL THEN 'Santé mentale' 
-		WHEN lndx.mnt IS NOT NULL AND lndx.tb IS NULL AND lndx.vih IS NOT NULL AND lndx.troubles_de_santé_mentale IS NULL THEN 'MNT + VIH' 
-		WHEN lndx.mnt IS NULL AND lndx.tb IS NOT NULL AND lndx.vih IS NOT NULL AND lndx.troubles_de_santé_mentale IS NULL THEN 'VIH + TB'
-		WHEN lndx.mnt IS NOT NULL AND lndx.tb IS NOT NULL AND lndx.vih IS NULL AND lndx.troubles_de_santé_mentale IS NULL THEN 'MNT + TB'
-		WHEN lndx.mnt IS NOT NULL AND lndx.tb IS NULL AND lndx.vih IS NULL AND lndx.troubles_de_santé_mentale IS NOT NULL THEN 'MNT + Santé mentale'
-		WHEN lndx.mnt IS NULL AND lndx.tb IS NOT NULL AND lndx.vih IS NULL AND lndx.troubles_de_santé_mentale IS NOT NULL THEN 'TB + Santé mentale'
-		WHEN lndx.mnt IS NULL AND lndx.tb IS NULL AND lndx.vih IS NOT NULL AND lndx.troubles_de_santé_mentale IS NOT NULL THEN 'VIH + Santé mentale' 
-	ELSE NULL END AS cohorte,
+array_to_string(
+  array_remove(ARRAY[
+    CASE WHEN lndx.vih IS NOT NULL THEN 'VIH' END,
+    CASE WHEN lndx.tb IS NOT NULL THEN 'Tuberculose' END,
+    CASE WHEN lndx.drépanocytose IS NOT NULL THEN 'Drépano' END,
+    CASE WHEN lndx.troubles_de_santé_mentale IS NOT NULL THEN 'Santé mentale' END,
+    CASE WHEN lndx.infection_hep_b IS NOT NULL OR lndx.infection_hep_c IS NOT NULL THEN 'Hépatite' END,
+    CASE 
+      WHEN lndx.mnt IS NOT NULL 
+       AND lndx.drépanocytose IS NULL 
+      THEN 'MNT' 
+    END
+  ], NULL),
+  ', '
+) AS liste_cohorte,
 	lndx.asthme,
 	lndx.drépanocytose,
 	lndx.insuffisance_renal_chronique,
