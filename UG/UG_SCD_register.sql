@@ -408,6 +408,37 @@ last_bmi AS (
 	WHERE
 		rn = 1
 ),
+
+-- The last_weight CTE extracts the last weightI measurement. Date is determined by the vitals date of the vitals and laboratory form. If no vitals date is present, results are not considered.
+	last_weight AS (
+	SELECT
+		initial_encounter_id,
+		last_weight_date,
+		last_weight
+	FROM
+		(
+			SELECT
+				c.initial_encounter_id,
+				vli.date_vital AS last_weight_date,
+				vli.weight AS last_weight,
+				ROW_NUMBER() OVER (
+					PARTITION BY c.initial_encounter_id
+					ORDER BY
+						vli.date_vital DESC,
+						vli.encounter_id DESC
+				) AS rn
+			FROM
+				cohort C
+				JOIN vitals_and_laboratory_information vli ON c.patient_id = vli.patient_id
+				AND c.initial_visit_date <= vli.date_vital
+				AND COALESCE(c.discharge_date, CURRENT_DATE) >= vli.date_vital
+			WHERE
+				vli.date_vital IS NOT NULL
+				AND vli.weight IS NOT NULL
+		) weight
+	WHERE
+		rn = 1
+),
 -- The last_muac CTE extracts the last MUAC measurement. Date is determined by the vitals date of the vitals and laboratory form. If no vitals date is present, results are not considered.
 last_muac AS (
 	SELECT
@@ -684,6 +715,7 @@ SELECT
 	lms.integrated_to_mh_program,
 	lb.last_bmi_date,
 	lb.last_bmi,
+	lw.last_weight,
 	lm.last_muac_date,
 	lm.last_muac,
 	lh.last_hemoglobin_date,
@@ -754,6 +786,7 @@ FROM
 	LEFT OUTER JOIN last_blood_transfusion lbt ON c.initial_encounter_id = lbt.initial_encounter_id
 	LEFT OUTER JOIN last_mh_screening lms ON c.initial_encounter_id = lms.initial_encounter_id
 	LEFT OUTER JOIN last_bmi lb ON c.initial_encounter_id = lb.initial_encounter_id
+	LEFT OUTER JOIN last_weight lw ON c.initial_encounter_id = lw.initial_encounter_id
 	LEFT OUTER JOIN last_muac lm ON c.initial_encounter_id = lm.initial_encounter_id
 	LEFT OUTER JOIN last_hemoglobin lh ON c.initial_encounter_id = lh.initial_encounter_id
 	LEFT OUTER JOIN last_creatinine lc ON c.initial_encounter_id = lc.initial_encounter_id
