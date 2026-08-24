@@ -365,7 +365,7 @@ SELECT
 		WHEN ab.age_fixed::int >= 40 AND ab.age_fixed::int <= 59 THEN '40-59'
 		WHEN ab.age_fixed::int >= 60 THEN '60+'
 		ELSE NULL
-	END AS age_group_current_2,
+	END AS age_group_current_who,
 	CASE
 		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int < 11 THEN '<11'
 		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int >= 11
@@ -376,7 +376,7 @@ SELECT
 		AND (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int <= 59 THEN '40-59'
 		WHEN (((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int >= 60 THEN '60+'
 		ELSE NULL
-	END AS age_group_admission_2,
+	END AS age_group_admission_who,
 	pdd.gender,
 	pa."patientCity" AS camp_location, 
 	pa."patientDistrict" AS block,
