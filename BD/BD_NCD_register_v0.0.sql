@@ -662,6 +662,7 @@ SELECT
 	lbp.diastolic_blood_pressure,
 	CASE WHEN lbp.systolic_blood_pressure IS NOT NULL AND lbp.diastolic_blood_pressure IS NOT NULL THEN CONCAT(lbp.systolic_blood_pressure,'/',lbp.diastolic_blood_pressure) END AS blood_pressure,
 	CASE WHEN lbp.systolic_blood_pressure <= 140 AND lbp.diastolic_blood_pressure <= 90 THEN 'Yes' WHEN lbp.systolic_blood_pressure > 140 OR lbp.diastolic_blood_pressure > 90 THEN 'No' END AS blood_pressure_control,
+	CASE WHEN lbp.systolic_blood_pressure <= 130 AND lbp.diastolic_blood_pressure <= 90 THEN 'Yes' WHEN lbp.systolic_blood_pressure > 130 OR lbp.diastolic_blood_pressure > 90 THEN 'No' END AS blood_pressure_control_DM,
 	lbp.last_bp_date,
 	lbmi.last_bmi,
 	lbmi.last_bmi_date,
