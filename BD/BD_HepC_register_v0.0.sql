@@ -336,8 +336,8 @@ SELECT
 		WHEN ab.age_fixed::int >= 25 AND ab.age_fixed::int <= 34 THEN '25-34'
 		WHEN ab.age_fixed::int >= 35 AND ab.age_fixed::int <= 44 THEN '35-44'
 		WHEN ab.age_fixed::int >= 45 AND ab.age_fixed::int <= 54 THEN '45-54'
-		WHEN ab.age_fixed::int >= 55 AND ab.age_fixed::int <= 64 THEN '55-64'
-		WHEN ab.age_fixed::int >= 65 THEN '65+'
+		WHEN ab.age_fixed::int >= 55 AND ab.age_fixed::int <= 64 THEN '55-65'
+		WHEN ab.age_fixed::int >= 65 THEN '66+'
 		ELSE NULL
 	END AS age_group_current,
 	(((c.initial_visit_date - ab.dob_min) + (c.initial_visit_date - ab.dob_max))::numeric / (2 * 365.2425))::int AS age_admission,
