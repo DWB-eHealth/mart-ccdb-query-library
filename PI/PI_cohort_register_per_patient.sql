@@ -92,6 +92,26 @@ last_stay AS (
   WHERE rn = 1
 ),
 
+/* ===================== INITIAL CGI-S ===================== */
+initial_cgi AS (
+  SELECT DISTINCT ON (ls.patient_id, ls.intake_date)
+    ls.patient_id,
+    ls.intake_date,
+    ia.cgi_s_score AS cgi_s_score_at_initial_assessment
+  FROM last_stay ls
+  JOIN (
+    SELECT patient_id, "date"::date AS assessment_date, cgi_s_score
+    FROM psychiatrist_mhgap_initial_assessment
+    UNION
+    SELECT patient_id, "date"::date AS assessment_date, cgi_s_score
+    FROM psy_counselors_initial_assessment
+  ) ia
+    ON ia.patient_id = ls.patient_id
+   AND ia.assessment_date >= ls.intake_date
+   AND (ls.discharge_date IS NULL OR ia.assessment_date <= ls.discharge_date)
+  ORDER BY ls.patient_id, ls.intake_date, ia.assessment_date
+),
+
 /* ===================== FORMS IN STAY ===================== */
 stay_forms AS (
   SELECT
@@ -486,6 +506,7 @@ ls.readmission,
   ss.second_follow_up_date,
   ct3.consult_type AS second_follow_type,
   
+  ic.cgi_s_score_at_initial_assessment,
   ls.discharge_date,
   ls.discharge_status,
         ls.cgi_s_discharge,
@@ -587,6 +608,7 @@ LEFT OUTER JOIN person_address_default pad
 	ON p.patient_id = pad.person_id
 LEFT JOIN last_stay ls ON ls.patient_id = p.patient_id
 LEFT JOIN stay_stats ss ON ss.patient_id = ls.patient_id AND ss.intake_date = ls.intake_date
+LEFT JOIN initial_cgi ic ON ic.patient_id = ls.patient_id AND ic.intake_date = ls.intake_date
 LEFT JOIN provider_counts pc ON pc.patient_id = ls.patient_id AND pc.intake_date = ls.intake_date
 LEFT JOIN consult_types ct1
   ON ct1.patient_id = ls.patient_id
