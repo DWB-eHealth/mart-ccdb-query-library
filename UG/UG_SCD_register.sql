@@ -408,6 +408,37 @@ last_bmi AS (
 	WHERE
 		rn = 1
 ),
+
+-- The last_weight CTE extracts the last weightI measurement. Date is determined by the vitals date of the vitals and laboratory form. If no vitals date is present, results are not considered.
+	last_weight AS (
+	SELECT
+		initial_encounter_id,
+		last_weight_date,
+		last_weight
+	FROM
+		(
+			SELECT
+				c.initial_encounter_id,
+				vli.date_vital AS last_weight_date,
+				vli.weight AS last_weight,
+				ROW_NUMBER() OVER (
+					PARTITION BY c.initial_encounter_id
+					ORDER BY
+						vli.date_vital DESC,
+						vli.encounter_id DESC
+				) AS rn
+			FROM
+				cohort C
+				JOIN vitals_and_laboratory_information vli ON c.patient_id = vli.patient_id
+				AND c.initial_visit_date <= vli.date_vital
+				AND COALESCE(c.discharge_date, CURRENT_DATE) >= vli.date_vital
+			WHERE
+				vli.date_vital IS NOT NULL
+				AND vli.weight IS NOT NULL
+		) weight
+	WHERE
+		rn = 1
+),
 -- The last_muac CTE extracts the last MUAC measurement. Date is determined by the vitals date of the vitals and laboratory form. If no vitals date is present, results are not considered.
 last_muac AS (
 	SELECT
@@ -569,7 +600,52 @@ medication_list_ongoing AS (
 		ongoing = 1
 	GROUP BY
 		initial_encounter_id
+),
+-- The hydroxyurea CTEs extract the first prescription date for hydroxyurea per patient enrollment window (initial_encounter_id), based on start_date and order_id (start_date first, order_id as tie breaker). Only prescriptions falling within the patient's enrollment window are considered.
+hydroxyurea_only AS (
+	SELECT
+		c.patient_id,
+		c.initial_encounter_id,
+		mdd.order_id,
+		mdd.coded_drug_name,
+		mdd.start_date
+	FROM
+		medication_data_default mdd
+		LEFT JOIN cohort C ON mdd.patient_id = c.patient_id
+		AND c.initial_visit_date <= mdd.start_date
+		AND COALESCE(c.discharge_date, CURRENT_DATE) >= mdd.start_date
+	WHERE
+		mdd.coded_drug_name IN (
+			'HYDROXYCARBAMIDE, 500mg, Capsule',
+			'HYDROXYCARBAMIDE, 1000mg, Tablet',
+			'HYDROXYCARBAMIDE, 100mg, Tablet',
+			'HYDROXYUREA, 10mg, Tablet'
+		)
+),
+hydroxyurea_start AS (
+	SELECT
+		*,
+		ROW_NUMBER() OVER (
+			PARTITION BY initial_encounter_id
+			ORDER BY
+				start_date ASC,
+				order_id ASC
+		) AS rx_rank
+	FROM
+		hydroxyurea_only
+),
+first_hydroxyurea AS (
+	SELECT
+		initial_encounter_id,
+		order_id AS hydroxyurea_order_id,
+		coded_drug_name AS hydroxyurea_drug_name,
+		start_date AS hydroxyurea_start_date
+	FROM
+		hydroxyurea_start
+	WHERE
+		rx_rank = 1
 )
+	
  -- *Main query* --
 SELECT
 	pi."Patient_Identifier",
@@ -684,6 +760,7 @@ SELECT
 	lms.integrated_to_mh_program,
 	lb.last_bmi_date,
 	lb.last_bmi,
+	lw.last_weight,
 	lm.last_muac_date,
 	lm.last_muac,
 	lh.last_hemoglobin_date,
@@ -693,7 +770,10 @@ SELECT
 	lmr.last_malaria_rdt_date,
 	lmr.last_malaria_rdt,
 	ml.medication_list,
-	mlo.medication_list_ongoing
+	mlo.medication_list_ongoing,
+	fh.hydroxyurea_order_id,
+	fh.hydroxyurea_drug_name,
+	fh.hydroxyurea_start_date
 FROM
 	cohort c
 	LEFT OUTER JOIN patient_identifier pi ON c.patient_id = pi.patient_id
@@ -754,9 +834,11 @@ FROM
 	LEFT OUTER JOIN last_blood_transfusion lbt ON c.initial_encounter_id = lbt.initial_encounter_id
 	LEFT OUTER JOIN last_mh_screening lms ON c.initial_encounter_id = lms.initial_encounter_id
 	LEFT OUTER JOIN last_bmi lb ON c.initial_encounter_id = lb.initial_encounter_id
+	LEFT OUTER JOIN last_weight lw ON c.initial_encounter_id = lw.initial_encounter_id
 	LEFT OUTER JOIN last_muac lm ON c.initial_encounter_id = lm.initial_encounter_id
 	LEFT OUTER JOIN last_hemoglobin lh ON c.initial_encounter_id = lh.initial_encounter_id
 	LEFT OUTER JOIN last_creatinine lc ON c.initial_encounter_id = lc.initial_encounter_id
 	LEFT OUTER JOIN last_malaria_rdt lmr ON c.initial_encounter_id = lmr.initial_encounter_id
 	LEFT OUTER JOIN medication_list ml ON c.initial_encounter_id = ml.initial_encounter_id
-	LEFT OUTER JOIN medication_list_ongoing mlo ON c.initial_encounter_id = mlo.initial_encounter_id;
+	LEFT OUTER JOIN medication_list_ongoing mlo ON c.initial_encounter_id = mlo.initial_encounter_id
+	LEFT OUTER JOIN first_hydroxyurea fh ON c.initial_encounter_id = fh.initial_encounter_id;
