@@ -1,97 +1,124 @@
--- The first CTE build the frame for patients entering and exiting the cohort. This frame is based on the MH intake form and the MH discharge form. The query takes all intake dates and matches discharge dates if the discharge date falls between the intake date and the next intake date (if present).
+-- Counts patients in the active cohort at each month end, using the cohort status
+-- criteria from PI_cohort_register_per_patient.
 WITH intake AS (
-	SELECT 
-		patient_id, encounter_id AS intake_encounter_id, date::date AS intake_date, DENSE_RANK () OVER (PARTITION BY patient_id ORDER BY date) AS intake_order, LEAD (date) OVER (PARTITION BY patient_id ORDER BY date) AS next_intake_date
-	FROM mental_health_intake),
+	SELECT
+		mhi.patient_id,
+		mhi.encounter_id AS intake_encounter_id,
+		mhi.date::date AS intake_date,
+		LEAD(mhi.date::date) OVER (
+			PARTITION BY mhi.patient_id
+			ORDER BY mhi.date::date
+		) AS next_intake_date
+	FROM mental_health_intake mhi
+),
 cohort AS (
-	SELECT
-		i.patient_id, i.intake_encounter_id, i.intake_date, mhd.encounter_id AS discharge_enctounter_id, mhd.discharge_date::date
+	SELECT DISTINCT ON (i.patient_id, i.intake_date)
+		i.patient_id,
+		i.intake_encounter_id,
+		i.intake_date,
+		i.next_intake_date,
+		mhd.discharge_date::date AS discharge_date
 	FROM intake i
-	LEFT JOIN mental_health_discharge mhd 
-		ON i.patient_id = mhd.patient_id AND mhd.discharge_date >= i.intake_date AND (mhd.discharge_date < i.next_intake_date OR i.next_intake_date IS NULL)),
--- The first psy initial assessment table extracts the date from the psy initial assessment as the cohort entry date. If multiple initial assessments are completed then the first is used.
-first_psy_initial_assessment AS (
-SELECT 
-		DISTINCT ON (c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date) c.intake_encounter_id,
-		pcia.date::date
-	FROM cohort c
-	LEFT OUTER JOIN psy_counselors_initial_assessment pcia
-		ON c.patient_id = pcia.patient_id
-	WHERE pcia.date >= c.intake_date AND (pcia.date <= c.discharge_date OR c.discharge_date IS NULL)
-	GROUP BY c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date, pcia.date
-	ORDER BY c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date, pcia.date ASC),
--- The first clinician initial assessment table extracts the date from the first clinician initial assesment. If multiple clinician initial assessments are completed then the first is used. This table is used in case there is no psy initial assessment date provided. 
-first_clinician_initial_assessment AS (
-SELECT 
-		DISTINCT ON (c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date) c.intake_encounter_id,
-		pmia.date::date
-	FROM cohort c
-	LEFT OUTER JOIN psychiatrist_mhgap_initial_assessment pmia 
-		ON c.patient_id = pmia.patient_id
-	WHERE pmia.date >= c.intake_date AND (pmia.date <= c.discharge_date OR c.discharge_date IS NULL)
-	GROUP BY c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date, pmia.date
-	ORDER BY c.patient_id, c.intake_encounter_id, c.intake_date, c.discharge_date, pmia.date ASC),
--- The following sub-tables create the active patient calculation by counting each day the cumulative admissions and exits from the cohort.
-active_patients AS (
+	LEFT JOIN mental_health_discharge mhd
+		ON mhd.patient_id = i.patient_id
+		AND mhd.discharge_date::date >= i.intake_date
+		AND (i.next_intake_date IS NULL OR mhd.discharge_date::date < i.next_intake_date)
+	ORDER BY
+		i.patient_id,
+		i.intake_date,
+		mhd.discharge_date DESC NULLS LAST
+),
+all_forms AS (
+	SELECT patient_id, date::date AS form_date, 'Initial' AS stage
+	FROM psychiatrist_mhgap_initial_assessment
+	UNION ALL
+	SELECT patient_id, date::date, 'Initial'
+	FROM psy_counselors_initial_assessment
+	UNION ALL
+	SELECT patient_id, date::date, 'Follow_up'
+	FROM psychiatrist_mhgap_follow_up
+	UNION ALL
+	SELECT patient_id, date::date, 'Follow_up'
+	FROM psy_counselors_follow_up
+),
+stay_forms AS (
 	SELECT
-		CASE 
-			WHEN fpia.date IS NOT NULL AND fcia.date IS NULL THEN fpia.date
-			WHEN fcia.date IS NOT NULL AND fpia.date IS NULL THEN fcia.date
-			WHEN fpia.date IS NOT NULL AND fcia.date IS NOT NULL AND fcia.date::date <= fpia.date::date THEN fcia.date
-			WHEN fpia.date IS NOT NULL AND fcia.date IS NOT NULL AND fcia.date::date > fpia.date::date THEN fpia.date
-			ELSE NULL
-		END	AS enrollment_date, 
-		c.discharge_date
+		c.patient_id,
+		c.intake_encounter_id,
+		c.intake_date,
+		af.form_date,
+		af.stage
 	FROM cohort c
-	LEFT OUTER JOIN first_psy_initial_assessment fpia USING(intake_encounter_id)
-	LEFT OUTER JOIN first_clinician_initial_assessment fcia USING(intake_encounter_id)
-	WHERE fpia.date IS NOT NULL OR fcia.date IS NOT NULL),
-range_values AS (
-	SELECT 
-		date_trunc('day',min(ap.enrollment_date)) AS minval,
-		date_trunc('day',CURRENT_DATE) AS maxval
-	FROM active_patients AS ap),
+	JOIN all_forms af
+		ON af.patient_id = c.patient_id
+		AND af.form_date >= c.intake_date
+		AND (c.next_intake_date IS NULL OR af.form_date < c.next_intake_date)
+		AND (c.discharge_date IS NULL OR af.form_date <= c.discharge_date)
+),
+followups AS (
+	SELECT
+		patient_id,
+		intake_encounter_id,
+		form_date,
+		ROW_NUMBER() OVER (
+			PARTITION BY patient_id, intake_encounter_id
+			ORDER BY form_date
+		) AS rn
+	FROM stay_forms
+	WHERE stage = 'Follow_up'
+),
+stay_stats AS (
+	SELECT
+		sf.patient_id,
+		sf.intake_encounter_id,
+		MIN(sf.form_date) FILTER (WHERE sf.stage = 'Initial') AS first_assessment_date,
+		MIN(f.form_date) FILTER (WHERE f.rn = 2) AS second_follow_up_date
+	FROM stay_forms sf
+	LEFT JOIN followups f
+		ON f.patient_id = sf.patient_id
+		AND f.intake_encounter_id = sf.intake_encounter_id
+	GROUP BY sf.patient_id, sf.intake_encounter_id
+),
+active_stays AS (
+	SELECT
+		c.patient_id,
+		ss.second_follow_up_date AS active_start_date,
+		c.discharge_date,
+		c.next_intake_date
+	FROM cohort c
+	JOIN stay_stats ss
+		ON ss.patient_id = c.patient_id
+		AND ss.intake_encounter_id = c.intake_encounter_id
+	WHERE ss.first_assessment_date IS NOT NULL
+		AND ss.second_follow_up_date IS NOT NULL
+),
+date_range AS (
+	SELECT
+		(date_trunc('month', CURRENT_DATE) - INTERVAL '1 year')::date AS min_date,
+		CURRENT_DATE AS max_date
+),
 day_range AS (
-	SELECT 
-		generate_series(minval,maxval,'1 day'::interval) as day
-	FROM range_values),   
-daily_admissions_total AS (
-	SELECT 
-		date_trunc('day', ap.enrollment_date) AS day,
-		count(*) AS patients
-	FROM active_patients AS ap
-	GROUP BY 1),
-daily_exits_total AS (
-	SELECT
-		date_trunc('day',ap.discharge_date) AS day,
-		count(*) AS patients
-	FROM active_patients AS ap
-	GROUP BY 1),
+	SELECT generate_series(min_date, max_date, '1 day'::interval)::date AS reporting_day
+	FROM date_range
+),
 daily_active_patients AS (
-	SELECT 
-		dr.day as reporting_day,
-		sum(dat.patients) over (order by dr.day asc rows between unbounded preceding and current row) AS cumulative_admissions_total,
+	SELECT
+		dr.reporting_day,
+		COUNT(DISTINCT ast.patient_id) AS active_patients_total,
 		CASE
-		    WHEN sum(det.patients) over (order by dr.day asc rows between unbounded preceding and current row) IS NULL
-		    THEN 0
-		    ELSE sum(det.patients) over (order by dr.day asc rows between unbounded preceding and current row) 
-		END AS cumulative_exits_total, 
-		CASE
-		    WHEN sum(det.patients) over (order by dr.day asc rows between unbounded preceding and current row) IS NULL 
-			THEN sum(dat.patients) over (order by dr.day asc rows between unbounded preceding and current row)
-		    ELSE (sum(dat.patients) over (order by dr.day asc rows between unbounded preceding and current row)-
-				sum(det.patients) over (order by dr.day asc rows between unbounded preceding and current row)) 
-		END AS active_patients_total,
-		CASE 
-			WHEN date(dr.day)::date = (date_trunc('MONTH', dr.day) + INTERVAL '1 MONTH - 1 day')::date THEN 1
+			WHEN dr.reporting_day = (date_trunc('month', dr.reporting_day) + INTERVAL '1 month - 1 day')::date THEN 1
 		END AS last_day_of_month
 	FROM day_range dr
-	LEFT OUTER JOIN daily_admissions_total dat ON dr.day = dat.day
-	LEFT OUTER JOIN daily_exits_total det ON dr.day = det.day)
--- Main query --
-SELECT 
+	LEFT JOIN active_stays ast
+		ON ast.active_start_date <= dr.reporting_day
+		AND (ast.next_intake_date IS NULL OR dr.reporting_day < ast.next_intake_date)
+		AND (ast.discharge_date IS NULL OR dr.reporting_day < ast.discharge_date)
+	GROUP BY dr.reporting_day
+)
+SELECT
 	dap.reporting_day,
 	dap.active_patients_total
 FROM daily_active_patients dap
-WHERE dap.last_day_of_month = 1 and dap.reporting_day > date_trunc('MONTH', CURRENT_DATE) - INTERVAL '1 year'
-GROUP BY dap.reporting_day, dap.active_patients_total;
+WHERE dap.last_day_of_month = 1
+	AND dap.reporting_day > date_trunc('month', CURRENT_DATE) - INTERVAL '1 year'
+ORDER BY dap.reporting_day;
