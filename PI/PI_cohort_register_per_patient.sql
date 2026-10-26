@@ -12,16 +12,17 @@ WITH patients AS (
 
 /* ================== ALL FORMS ===================== */
 all_forms AS (
-  SELECT patient_id, "date"::date AS form_date, visit_location, 'Psychiatrist' AS provider, 'Initial' AS stage
+  SELECT patient_id, "date"::date AS form_date, visit_location, 'Psychiatrist' AS provider, 'Initial' AS stage,
+         encounter_id
   FROM psychiatrist_mhgap_initial_assessment
   UNION ALL
-  SELECT patient_id, "date"::date, visit_location, 'Psychologist', 'Initial'
+  SELECT patient_id, "date"::date, visit_location, 'Psychologist', 'Initial', encounter_id
   FROM psy_counselors_initial_assessment
   UNION ALL
-  SELECT patient_id, "date"::date, visit_location, 'Psychiatrist', 'Follow_up'
+  SELECT patient_id, "date"::date, visit_location, 'Psychiatrist', 'Follow_up', encounter_id
   FROM psychiatrist_mhgap_follow_up
   UNION ALL
-  SELECT patient_id, "date"::date, visit_location, 'Psychologist', 'Follow_up'
+  SELECT patient_id, "date"::date, visit_location, 'Psychologist', 'Follow_up', encounter_id
   FROM psy_counselors_follow_up
 ),
 
@@ -100,16 +101,16 @@ initial_cgi AS (
     ia.cgi_s_score AS cgi_s_score_at_initial_assessment
   FROM last_stay ls
   JOIN (
-    SELECT patient_id, "date"::date AS assessment_date, cgi_s_score
+    SELECT patient_id, "date"::date AS assessment_date, encounter_id, cgi_s_score
     FROM psychiatrist_mhgap_initial_assessment
-    UNION
-    SELECT patient_id, "date"::date AS assessment_date, cgi_s_score
+    UNION ALL
+    SELECT patient_id, "date"::date AS assessment_date, encounter_id, cgi_s_score
     FROM psy_counselors_initial_assessment
   ) ia
     ON ia.patient_id = ls.patient_id
    AND ia.assessment_date >= ls.intake_date
    AND (ls.discharge_date IS NULL OR ia.assessment_date <= ls.discharge_date)
-  ORDER BY ls.patient_id, ls.intake_date, ia.assessment_date
+  ORDER BY ls.patient_id, ls.intake_date, ia.assessment_date, ia.encounter_id
 ),
 
 /* ===================== FORMS IN STAY ===================== */
@@ -120,7 +121,8 @@ stay_forms AS (
     af.form_date,
     af.stage,
     af.provider,
-    af.visit_location
+    af.visit_location,
+    af.encounter_id
   FROM last_stay ls
   LEFT JOIN all_forms af
     ON af.patient_id = ls.patient_id
@@ -134,27 +136,85 @@ followups AS (
     patient_id,
     intake_date,
     form_date,
+    encounter_id,
     ROW_NUMBER() OVER (
-      PARTITION BY patient_id, intake_date ORDER BY form_date
+      PARTITION BY patient_id, intake_date ORDER BY form_date, encounter_id
     ) AS rn
   FROM stay_forms
   WHERE stage = 'Follow_up'
 ),
 
+initial_assessments AS (
+  SELECT
+    patient_id,
+    intake_date,
+    form_date,
+    encounter_id,
+    ROW_NUMBER() OVER (
+      PARTITION BY patient_id, intake_date ORDER BY form_date, encounter_id
+    ) AS rn
+  FROM stay_forms
+  WHERE stage = 'Initial'
+),
+
+followup_stats AS (
+  SELECT
+    f1.patient_id,
+    f1.intake_date,
+    f1.form_date AS first_follow_up_date,
+    f1.encounter_id AS first_follow_up_encounter_id,
+    f2.form_date AS second_follow_up_date,
+    f2.encounter_id AS second_follow_up_encounter_id
+  FROM followups f1
+  LEFT JOIN followups f2
+    ON f2.patient_id = f1.patient_id
+   AND f2.intake_date = f1.intake_date
+   AND f2.rn = 2
+  WHERE f1.rn = 1
+),
+
 /* ===================== STATS ===================== */
-stay_stats AS (
+stay_stats_base AS (
   SELECT
     sf.patient_id,
     sf.intake_date,
-    MIN(sf.form_date) FILTER (WHERE sf.stage = 'Initial') AS first_assessment_date,
-    MIN(sf.form_date) FILTER (WHERE sf.stage = 'Follow_up') AS first_follow_up_date,
-    MIN(f.form_date) FILTER (WHERE f.rn = 2) AS second_follow_up_date,
-        MAX(sf.form_date) AS last_consultation_date
+    MIN(sf.form_date) FILTER (WHERE sf.stage = 'Initial') AS first_assessment_date
   FROM stay_forms sf
-  LEFT JOIN followups f
-    ON f.patient_id = sf.patient_id
-   AND f.intake_date = sf.intake_date
   GROUP BY sf.patient_id, sf.intake_date
+),
+last_consultation AS (
+  SELECT DISTINCT ON (patient_id, intake_date)
+    patient_id,
+    intake_date,
+    form_date AS last_consultation_date,
+    encounter_id AS last_consultation_encounter_id
+  FROM stay_forms
+  WHERE form_date IS NOT NULL
+  ORDER BY patient_id, intake_date, form_date DESC, encounter_id DESC
+),
+stay_stats AS (
+  SELECT
+    ssb.patient_id,
+    ssb.intake_date,
+    ssb.first_assessment_date,
+    ia.encounter_id AS first_assessment_encounter_id,
+    fs.first_follow_up_date,
+    fs.first_follow_up_encounter_id,
+    fs.second_follow_up_date,
+    fs.second_follow_up_encounter_id,
+    lc.last_consultation_date,
+    lc.last_consultation_encounter_id
+  FROM stay_stats_base ssb
+  LEFT JOIN initial_assessments ia
+    ON ia.patient_id = ssb.patient_id
+   AND ia.intake_date = ssb.intake_date
+   AND ia.rn = 1
+  LEFT JOIN followup_stats fs
+    ON fs.patient_id = ssb.patient_id
+   AND fs.intake_date = ssb.intake_date
+  LEFT JOIN last_consultation lc
+    ON lc.patient_id = ssb.patient_id
+   AND lc.intake_date = ssb.intake_date
 ),
 
 /* =====================================================
@@ -493,27 +553,33 @@ END AS cohort,
 ls.readmission,
 
   ls.intake_date,
+  ls.intake_encounter_id,
   ls.visit_location_intake,
   ls.source_of_initial_patient_referral,
 
   ss.first_assessment_date,
+  ss.first_assessment_encounter_id,
   ct1.consult_type AS first_assessment_type,
  
 
   ss.first_follow_up_date,
+  ss.first_follow_up_encounter_id,
   ct2.consult_type AS first_follow_up_type,
 
   ss.second_follow_up_date,
+  ss.second_follow_up_encounter_id,
   ct3.consult_type AS second_follow_type,
   
   ic.cgi_s_score_at_initial_assessment,
   ls.discharge_date,
+  ls.discharge_encounter_id,
   ls.discharge_status,
         ls.cgi_s_discharge,
       ls.cgi_i_discharge,
   
 
 ss.last_consultation_date,
+ss.last_consultation_encounter_id,
 ct_last.consult_type AS last_consultation_type,
   a.last_appointment_date,
   a.appointment_status,
