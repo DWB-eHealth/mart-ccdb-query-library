@@ -245,7 +245,8 @@ SELECT
 	next_form_name AS "Next consultation form name",
 	CASE
 		WHEN form_name = 'Mental Health Discharge'
-			AND (next_form_name <> 'Mental Health Intake' OR next_form_name IS NULL)
+			AND next_form_name IS NOT NULL
+			AND next_form_name <> 'Mental Health Intake'
 		THEN 'Yes'
 		ELSE NULL
 	END AS "Discharged not followed by intake",
